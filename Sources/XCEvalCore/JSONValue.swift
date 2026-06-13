@@ -91,4 +91,13 @@ public enum JSONValue: Codable, Equatable, Sendable {
         guard let data = value.data(using: .utf8) else { return nil }
         return try? decode(data)
     }
+
+    public func encodedData(pretty: Bool = false) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        if pretty {
+            encoder.outputFormatting.insert(.prettyPrinted)
+        }
+        return try encoder.encode(self)
+    }
 }

@@ -18,6 +18,7 @@ public enum ProcessRunner {
     public static func run(
         executable: URL,
         arguments: [String],
+        currentDirectory: URL? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws -> ProcessResult {
         let temporaryDirectory = FileManager.default.temporaryDirectory
@@ -43,6 +44,7 @@ public enum ProcessRunner {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
+        process.currentDirectoryURL = currentDirectory
         process.environment = environment
         process.standardOutput = stdout
         process.standardError = stderr

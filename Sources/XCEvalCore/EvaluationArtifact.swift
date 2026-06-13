@@ -15,6 +15,7 @@ public struct EvaluationArtifact: Sendable {
     ])
 
     public let sourceURL: URL
+    public let sourceLine: Int?
     public let rawData: Data
     public let root: [String: JSONValue]
 
@@ -23,7 +24,11 @@ public struct EvaluationArtifact: Sendable {
         try self.init(data: data, sourceURL: url)
     }
 
-    public init(data: Data, sourceURL: URL = URL(fileURLWithPath: "<memory>")) throws {
+    public init(
+        data: Data,
+        sourceURL: URL = URL(fileURLWithPath: "<memory>"),
+        sourceLine: Int? = nil
+    ) throws {
         let value: JSONValue
         do {
             value = try JSONValue.decode(data)
@@ -38,8 +43,14 @@ public struct EvaluationArtifact: Sendable {
         }
 
         self.sourceURL = sourceURL
+        self.sourceLine = sourceLine
         rawData = data
         self.root = root
+    }
+
+    public var sourceDescription: String {
+        guard let sourceLine else { return sourceURL.path }
+        return "\(sourceURL.path):\(sourceLine)"
     }
 
     public var evaluationID: String? {
@@ -102,6 +113,10 @@ public struct EvaluationArtifact: Sendable {
             guard let columns = row.objectValue else { return nil }
             return EvaluationSample(index: index, columns: columns)
         }
+    }
+
+    public var rawResultCount: Int {
+        root["results"]?.arrayValue?.count ?? 0
     }
 
     public func comparisons(

@@ -22,11 +22,13 @@ struct CompareCommand: ParsableCommand {
 
     mutating func run() throws {
         let output = try outputOptions.resolve()
-        let baseline = try EvaluationArtifact(
-            contentsOf: expandedURL(baselinePath)
+        let baseline = try loadSingleArtifact(
+            path: baselinePath,
+            selection: ArtifactSelectionOptions()
         )
-        let candidate = try EvaluationArtifact(
-            contentsOf: expandedURL(candidatePath)
+        let candidate = try loadSingleArtifact(
+            path: candidatePath,
+            selection: ArtifactSelectionOptions()
         )
         let comparisons = baseline.comparisons(with: candidate)
 

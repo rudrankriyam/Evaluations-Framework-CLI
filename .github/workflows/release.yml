@@ -115,7 +115,7 @@ jobs:
               # frozen_string_literal: true
 
               class Xceval < Formula
-                desc "Inspect Apple Evaluations artifacts and Xcode result bundles"
+                desc "Run and inspect Apple Evaluations workflows from the command line"
                 homepage "https://github.com/rudrankriyam/Evaluations-Framework-CLI"
                 url "https://github.com/rudrankriyam/Evaluations-Framework-CLI/releases/download/{version}/xceval_{version}_macOS_universal"
                 version "{version}"

@@ -54,20 +54,13 @@ struct ExportCommand: ParsableCommand {
         let installation = try XcodeLocator.evaluationCapableInstallation(
             preferredPath: xcode
         )
-        let result = try runExport(
-            input: input,
-            destination: destination,
-            installation: installation
+        let artifacts = try XcodeEvaluationExporter.export(
+            xcresult: input,
+            outputDirectory: destination,
+            installation: installation,
+            testID: testID,
+            onlyFailures: onlyFailures
         )
-        guard result.status == 0 else {
-            throw XCEvalCommandError.processFailed(
-                command: "xcresulttool export evaluations",
-                status: result.status,
-                message: result.standardErrorString
-            )
-        }
-
-        let artifacts = loadExportArtifacts(from: destination)
         try emitExport(
             artifacts,
             input: input,
@@ -91,53 +84,8 @@ struct ExportCommand: ParsableCommand {
         try fileManager.removeItem(at: destination)
     }
 
-    private func runExport(
-        input: URL,
-        destination: URL,
-        installation: XcodeInstallation
-    ) throws -> ProcessResult {
-        var arguments = [
-            "xcresulttool",
-            "export",
-            "evaluations",
-            "--path",
-            input.path,
-            "--output-path",
-            destination.path
-        ]
-        if onlyFailures {
-            arguments.append("--only-failures")
-        }
-        if let testID {
-            arguments.append(contentsOf: ["--test-id", testID])
-        }
-        return try ProcessRunner.run(
-            executable: URL(fileURLWithPath: "/usr/bin/xcrun"),
-            arguments: arguments,
-            environment: XcodeLocator.environment(for: installation)
-        )
-    }
-
-    private func loadExportArtifacts(from destination: URL) -> ExportArtifacts {
-        let fileManager = FileManager.default
-        let manifestURL = destination.appendingPathComponent("manifest.json")
-        let manifest = try? JSONValue.decode(Data(contentsOf: manifestURL))
-        var files: [String] = []
-        if let enumerator = fileManager.enumerator(
-            at: destination,
-            includingPropertiesForKeys: nil
-        ) {
-            for case let file as URL in enumerator
-            where file.pathExtension == "xcevalresult" {
-                files.append(file.path)
-            }
-        }
-        files.sort()
-        return ExportArtifacts(files: files, manifest: manifest)
-    }
-
     private func emitExport(
-        _ artifacts: ExportArtifacts,
+        _ artifacts: XcodeEvaluationExport,
         input: URL,
         destination: URL,
         installation: XcodeInstallation,
@@ -148,7 +96,7 @@ struct ExportCommand: ParsableCommand {
             print("Exported \(artifacts.files.count) evaluation artifact(s).")
             print("Output: \(destination.path)")
             for file in artifacts.files {
-                print("- \(file)")
+                print("- \(file.path)")
             }
         case .json:
             try CLIOutput.emit(
@@ -158,7 +106,7 @@ struct ExportCommand: ParsableCommand {
                     xcode: installation,
                     onlyFailures: onlyFailures,
                     testID: testID,
-                    exportedFiles: artifacts.files,
+                    exportedFiles: artifacts.files.map(\.path),
                     manifest: artifacts.manifest
                 ),
                 options: output
@@ -283,11 +231,6 @@ struct DoctorCommand: ParsableCommand {
             print("- \(framework.platform): \(framework.path)")
         }
     }
-}
-
-private struct ExportArtifacts {
-    let files: [String]
-    let manifest: JSONValue?
 }
 
 enum XCEvalCommandError: LocalizedError {

@@ -7,7 +7,9 @@ struct InspectCommand: ParsableCommand {
         abstract: "Read metadata, aggregate metrics, and sample rows."
     )
 
-    @Argument(help: "Path to a .xcevalresult JSON artifact.")
+    @Argument(
+        help: "Artifact, .xcevalresults.jsonl, directory, or '-' for stdin."
+    )
     var path: String
 
     @Flag(
@@ -16,11 +18,15 @@ struct InspectCommand: ParsableCommand {
     )
     var summaryOnly = false
 
+    @OptionGroup var selection: ArtifactSelectionOptions
     @OptionGroup var outputOptions: InspectOutputOptions
 
     mutating func run() throws {
         let output = try outputOptions.resolve()
-        let artifact = try EvaluationArtifact(contentsOf: expandedURL(path))
+        let artifact = try loadSingleArtifact(
+            path: path,
+            selection: selection
+        )
 
         switch output.format {
         case .text:
@@ -49,7 +55,9 @@ struct SamplesCommand: ParsableCommand {
         abstract: "Emit normalized per-sample evaluation rows."
     )
 
-    @Argument(help: "Path to a .xcevalresult JSON artifact.")
+    @Argument(
+        help: "Artifact, .xcevalresults.jsonl, directory, or '-' for stdin."
+    )
     var path: String
 
     @Flag(
@@ -58,15 +66,68 @@ struct SamplesCommand: ParsableCommand {
     )
     var onlyFailures = false
 
+    @Option(
+        name: .long,
+        help: "Keep samples containing this metric name."
+    )
+    var metric: String?
+
+    @Option(
+        name: .long,
+        help: "Keep samples containing this metric kind: pass, fail, score, or ignore."
+    )
+    var kind: String?
+
+    @Option(
+        name: .long,
+        help: "Keep samples containing this evaluator kind."
+    )
+    var evaluatorKind: String?
+
+    @Option(
+        name: .long,
+        help: "Keep samples whose decoded prompt contains this text."
+    )
+    var promptContains: String?
+
+    @Option(
+        name: .long,
+        help: "Keep samples whose evaluator rationale contains this text."
+    )
+    var rationaleContains: String?
+
+    @Option(
+        name: .long,
+        help: "Skip this many matching rows."
+    )
+    var offset = 0
+
+    @Option(
+        name: .long,
+        help: "Emit at most this many matching rows."
+    )
+    var limit: Int?
+
+    @OptionGroup var selection: ArtifactSelectionOptions
     @OptionGroup var outputOptions: SamplesOutputOptions
 
     mutating func run() throws {
+        guard offset >= 0 else {
+            throw ValidationError("--offset must not be negative.")
+        }
+        if let limit, limit < 0 {
+            throw ValidationError("--limit must not be negative.")
+        }
         let output = try outputOptions.resolve()
-        let artifact = try EvaluationArtifact(contentsOf: expandedURL(path))
-        let samples =
-            onlyFailures
-            ? artifact.samples.filter(\.hasFailure)
-            : artifact.samples
+        let artifact = try loadSingleArtifact(
+            path: path,
+            selection: selection
+        )
+        var samples = artifact.samples.filter(matches)
+        samples = Array(samples.dropFirst(offset))
+        if let limit {
+            samples = Array(samples.prefix(limit))
+        }
 
         switch output.format {
         case .text:
@@ -74,7 +135,7 @@ struct SamplesCommand: ParsableCommand {
         case .json:
             try CLIOutput.emit(
                 SamplesPayload(
-                    path: artifact.sourceURL.path,
+                    path: artifact.sourceDescription,
                     evaluationID: artifact.evaluationID,
                     resultID: artifact.resultID,
                     sampleCount: samples.count,
@@ -95,6 +156,46 @@ struct SamplesCommand: ParsableCommand {
         case .rawJSON:
             preconditionFailure("Validated output format is exhaustive.")
         }
+    }
+
+    private func matches(_ sample: EvaluationSample) -> Bool {
+        if onlyFailures, !sample.hasFailure {
+            return false
+        }
+        if let metric, !sample.metrics.contains(where: { $0.name == metric }) {
+            return false
+        }
+        if let kind, !sample.metrics.contains(where: { $0.kind == kind }) {
+            return false
+        }
+        if let evaluatorKind {
+            let containsEvaluator = sample.metrics.contains(where: {
+                $0.evaluatorKind == evaluatorKind
+            })
+            if !containsEvaluator {
+                return false
+            }
+        }
+        if let promptContains {
+            let promptMatches =
+                sample.prompt?.localizedCaseInsensitiveContains(
+                    promptContains
+                ) == true
+            if !promptMatches {
+                return false
+            }
+        }
+        if let rationaleContains {
+            let containsRationale = sample.metrics.contains(where: {
+                $0.rationale?.localizedCaseInsensitiveContains(
+                    rationaleContains
+                ) == true
+            })
+            if !containsRationale {
+                return false
+            }
+        }
+        return true
     }
 
     private func printSamples(_ samples: [EvaluationSample]) {
