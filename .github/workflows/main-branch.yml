@@ -1,0 +1,47 @@
+name: Main Branch
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xceval-main-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Show toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Resolve package dependencies
+        run: swift package resolve
+
+      - name: Build and test
+        run: |
+          swift build
+          swift test
+
+      - name: Build universal release binary
+        run: |
+          rm -rf .build-release build
+          swift build -c release --arch arm64 --arch x86_64 \
+            --product xceval --scratch-path .build-release
+          mkdir -p build
+          cp .build-release/apple/Products/Release/xceval build/xceval_dev_macOS_universal
+          shasum -a 256 build/xceval_dev_macOS_universal > build/xceval_dev_checksums.txt
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: xceval-main-build
+          path: build/

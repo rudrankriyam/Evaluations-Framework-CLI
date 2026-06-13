@@ -1,0 +1,147 @@
+name: Release CLI
+
+on:
+  push:
+    tags:
+      - '[0-9]*.[0-9]*.[0-9]*'
+
+jobs:
+  release:
+    runs-on: macos-26
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Validate release tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tags must match x.y.z. Got: ${TAG}"
+            exit 1
+          fi
+          printf 'VERSION=%s\n' "$TAG" >> "$GITHUB_ENV"
+
+      - name: Build and test
+        run: |
+          swift package resolve
+          swift build
+          swift test
+
+      - name: Build universal release binary
+        run: |
+          rm -rf .build-release release
+          mkdir -p release
+          swift build -c release --arch arm64 --arch x86_64 \
+            --product xceval --scratch-path .build-release
+          cp .build-release/apple/Products/Release/xceval \
+            "release/xceval_${VERSION}_macOS_universal"
+          chmod +x "release/xceval_${VERSION}_macOS_universal"
+
+      - name: Detect signing configuration
+        id: signing
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          APPLE_DEVELOPER_ID_CERT: ${{ secrets.APPLE_DEVELOPER_ID_CERT }}
+          APPLE_DEVELOPER_ID_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}
+        run: |
+          if [ -n "$APPLE_DEVELOPER_ID" ] \
+            && [ -n "$APPLE_DEVELOPER_ID_CERT" ] \
+            && [ -n "$APPLE_DEVELOPER_ID_PASSWORD" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import Apple certificate
+        if: ${{ steps.signing.outputs.enabled == 'true' }}
+        uses: apple-actions/import-codesign-certs@v7
+        with:
+          p12-file-base64: ${{ secrets.APPLE_DEVELOPER_ID_CERT }}
+          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}
+
+      - name: Sign release binary
+        if: ${{ steps.signing.outputs.enabled == 'true' }}
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+        run: |
+          codesign --force --sign "$APPLE_DEVELOPER_ID" --timestamp \
+            --options=runtime "release/xceval_${VERSION}_macOS_universal"
+
+      - name: Create checksum
+        run: |
+          shasum -a 256 "release/xceval_${VERSION}_macOS_universal" \
+            > "release/xceval_${VERSION}_checksums.txt"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${VERSION}" release/* --generate-notes --verify-tag
+
+      - name: Detect tap publishing configuration
+        id: tap
+        env:
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          if [ -n "$TAP_GITHUB_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update Homebrew tap
+        if: ${{ steps.tap.outputs.enabled == 'true' }}
+        env:
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          export SHA256=$(shasum -a 256 \
+            "release/xceval_${VERSION}_macOS_universal" | cut -d ' ' -f 1)
+          git clone \
+            "https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/rudrankriyam/homebrew-tap.git" \
+            homebrew-tap
+          cd homebrew-tap
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          from textwrap import dedent
+
+          version = os.environ["VERSION"]
+          sha256 = os.environ["SHA256"]
+          formula = dedent(
+              f"""\
+              # typed: false
+              # frozen_string_literal: true
+
+              class Xceval < Formula
+                desc "Inspect Apple Evaluations artifacts and Xcode result bundles"
+                homepage "https://github.com/rudrankriyam/Evaluations-Framework-CLI"
+                url "https://github.com/rudrankriyam/Evaluations-Framework-CLI/releases/download/{version}/xceval_{version}_macOS_universal"
+                version "{version}"
+                sha256 "{sha256}"
+                license "MIT"
+
+                depends_on :macos
+
+                def install
+                  bin.install "xceval_{version}_macOS_universal" => "xceval"
+                end
+
+                test do
+                  assert_match "Apple Evaluations", shell_output("#{{bin}}/xceval --help")
+                end
+              end
+              """
+          )
+          Path("Formula/xceval.rb").write_text(formula, encoding="utf-8")
+          PY
+          git config user.name "Rudrank Riyam"
+          git config user.email "rudrankriyam@gmail.com"
+          git add Formula/xceval.rb
+          git commit -m "Update xceval to ${VERSION}" || echo "No changes to commit"
+          git push
+
+      - name: Note skipped Homebrew tap update
+        if: ${{ steps.tap.outputs.enabled != 'true' }}
+        run: echo "Skipping Homebrew tap update because TAP_GITHUB_TOKEN is not configured."

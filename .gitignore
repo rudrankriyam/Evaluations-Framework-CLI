@@ -1,0 +1,23 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+DerivedData/
+xcuserdata/
+*.xcresult/
+
+# Evaluation artifacts
+*.xcevalresult
+*.xcevalresults.jsonl
+
+# Build products
+build/
+release/
+*.dSYM
+*.dSYM.zip
+*.log
+
+# macOS
+.DS_Store
