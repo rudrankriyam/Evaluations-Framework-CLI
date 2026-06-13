@@ -12,7 +12,7 @@ struct CapabilityPayload: Encodable {
     let support: CapabilitySupport
     let command: String
     let boundary: String
-    let agentUse: String
+    let automationUse: String
 }
 
 struct CapabilitiesPayload: Encodable {
@@ -48,7 +48,7 @@ private let runtimeCapabilityPayloads = [
             Subjects, sample types, and evaluator code are compiled Swift \
             owned by the producer.
             """,
-        agentUse: """
+        automationUse: """
             Run any package or executable that saves .xcevalresult, then \
             ingest the new artifacts.
             """
@@ -62,7 +62,7 @@ private let runtimeCapabilityPayloads = [
             The framework executes inside the app or test process; xceval \
             drives xcodebuild and exports attachments.
             """,
-        agentUse: """
+        automationUse: """
             Execute tests, retain the xcresult path, and immediately \
             receive evaluation artifact paths.
             """
@@ -78,7 +78,7 @@ private let runtimeCapabilityPayloads = [
         support: .producerOwned,
         command: "xceval run --results-path DIR -- COMMAND",
         boundary: "Dataset element types and decoding live in producer code.",
-        agentUse: """
+        automationUse: """
             Invoke the typed runner and inspect the resulting dataset \
             behavior through sample rows.
             """
@@ -99,7 +99,7 @@ private let runtimeCapabilityPayloads = [
             Model choice, credentials, prompts, dimensions, and pairwise \
             candidates are application-specific.
             """,
-        agentUse: """
+        automationUse: """
             Run the configured judge and analyze every persisted score and \
             rationale with samples and metrics.
             """
@@ -118,9 +118,9 @@ private let runtimeCapabilityPayloads = [
             Tool schemas and transcript types are compiled into the \
             producer.
             """,
-        agentUse: """
-            Execute agent tests and inspect pass, fail, score, ignore, and \
-            rationale columns.
+        automationUse: """
+            Execute tool-calling tests and inspect pass, fail, score, ignore, \
+            and rationale columns.
             """
     ),
     CapabilityPayload(
@@ -141,7 +141,7 @@ private let runtimeCapabilityPayloads = [
         boundary: """
             Matchers evaluate typed tool arguments while the producer runs.
             """,
-        agentUse: """
+        automationUse: """
             Use stored ToolCallEvaluator metrics and rationales to identify \
             exact mismatch rows.
             """
@@ -163,7 +163,7 @@ private let runtimeCapabilityPayloads = [
             Generable expected types, sessions, prompts, and validators \
             must be compiled in producer code.
             """,
-        agentUse: """
+        automationUse: """
             Run the generator executable, then consume its JSON dataset or \
             subsequent evaluation results.
             """
@@ -190,7 +190,7 @@ private let analysisCapabilityPayloads = [
             Custom aggregation executes in producer code; all stored \
             aggregate values are queryable generically.
             """,
-        agentUse: """
+        automationUse: """
             Enumerate summary values, groups, source metrics, and per-sample \
             distributions.
             """
@@ -210,7 +210,7 @@ private let analysisCapabilityPayloads = [
             xceval preserves unknown fields and does not depend on beta \
             framework round-tripping.
             """,
-        agentUse: """
+        automationUse: """
             Pack many runs into JSONL, split collections, validate them, or \
             stream them through stdin.
             """
@@ -229,7 +229,7 @@ private let analysisCapabilityPayloads = [
             The CLI reads the persisted JSON representation rather than \
             importing TabularData.
             """,
-        agentUse: """
+        automationUse: """
             Query metadata, normalized samples, rationales, evaluator \
             kinds, and aggregate values.
             """
@@ -243,7 +243,7 @@ private let analysisCapabilityPayloads = [
             Supports Apple's sample DatasetExtractor shape and a richer \
             normalized record.
             """,
-        agentUse: """
+        automationUse: """
             Extract prompts, responses, expected values, and decoded input \
             in one command.
             """
@@ -260,7 +260,7 @@ private let automationCapabilityPayloads = [
             Uses Apple's public xcresulttool command from an \
             Evaluations-capable Xcode.
             """,
-        agentUse: """
+        automationUse: """
             Recover all .xcevalresult attachments and manifest metadata \
             without opening Xcode.
             """
@@ -274,7 +274,7 @@ private let automationCapabilityPayloads = [
             Metric direction is never guessed; gates require explicit \
             comparison operators.
             """,
-        agentUse: """
+        automationUse: """
             Detect malformed rows, calculate deltas, and fail automation \
             on precise aggregate thresholds.
             """

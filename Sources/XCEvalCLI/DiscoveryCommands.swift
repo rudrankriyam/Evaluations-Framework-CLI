@@ -5,7 +5,7 @@ import XCEvalCore
 struct CapabilitiesCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "capabilities",
-        abstract: "Describe every Evaluations workflow and xceval boundary."
+        abstract: "Describe Evaluations workflows and xceval boundaries."
     )
 
     @Option(

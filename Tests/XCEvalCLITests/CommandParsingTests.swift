@@ -77,7 +77,7 @@ func parsesTestPassthrough() throws {
 }
 
 @Test("Capabilities cover native, orchestrated, and producer-owned work")
-func exposesCapabilityBoundaries() {
+func exposesCapabilityBoundaries() throws {
     let capabilities = CapabilitiesPayload(
         selectedXcode: nil
     ).capabilities
@@ -86,6 +86,18 @@ func exposesCapabilityBoundaries() {
     #expect(capabilities.contains { $0.support == .native })
     #expect(capabilities.contains { $0.support == .orchestrated })
     #expect(capabilities.contains { $0.support == .producerOwned })
+
+    let data = try JSONEncoder().encode(
+        CapabilitiesPayload(selectedXcode: nil)
+    )
+    let json = try #require(
+        try JSONSerialization.jsonObject(with: data) as? [String: Any]
+    )
+    let encodedCapabilities = try #require(
+        json["capabilities"] as? [[String: Any]]
+    )
+    #expect(encodedCapabilities.allSatisfy { $0["automationUse"] != nil })
+    #expect(encodedCapabilities.allSatisfy { $0["agentUse"] == nil })
 }
 
 @Test("Artifact snapshots detect content changes with stable metadata")

@@ -10,7 +10,8 @@ struct XCEvalRootCommand: AsyncParsableCommand {
             xceval is an unofficial community tool, not an Apple command or \
             product. It orchestrates typed evaluation producers, reads \
             .xcevalresult JSON, exports attachments from .xcresult bundles, and \
-            emits stable machine-readable output for agents and automation.
+            emits stable machine-readable output for scripts, CI, and developer \
+            tools.
             """,
         version: "0.1.0",
         subcommands: [
