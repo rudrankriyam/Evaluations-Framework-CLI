@@ -64,8 +64,15 @@ struct RunCommand: ParsableCommand {
             includeExisting || before[$0] != after[$0]
         }.sorted()
         let artifacts = try changedPaths.flatMap {
-            try EvaluationArtifactLoader.load(
+            let loaded = try EvaluationArtifactLoader.load(
                 from: URL(fileURLWithPath: $0)
+            )
+            if includeExisting {
+                return loaded
+            }
+            return artifactsAddedOrChanged(
+                loaded,
+                comparedTo: before[$0]
             )
         }
         let payload = RunPayload(

@@ -606,6 +606,28 @@ assert_json "$WORK/run-relative-results.json" \
     'd["resultsPath"].endswith("relative producer directory/relative-results") and len(d["artifacts"]) == 1' \
     "relative results path uses producer working directory"
 
+RUN_JSONL="$WORK/run-results.jsonl"
+cp "$BASE" "$RUN_JSONL"
+"$BIN" run \
+    --results-path "$RUN_JSONL" \
+    --output json \
+    -- /bin/sh -c 'cat "$1" >> "$2"' \
+    _ "$CANDIDATE" "$RUN_JSONL" >"$WORK/run-jsonl.json"
+assert_json "$WORK/run-jsonl.json" \
+    'len(d["artifacts"]) == 1 and d["artifacts"][0]["resultID"] == "CANDIDATE"' \
+    "JSONL run returns only appended artifacts"
+
+RUN_DUPLICATE_JSONL="$WORK/run-duplicate-results.jsonl"
+cp "$BASE" "$RUN_DUPLICATE_JSONL"
+"$BIN" run \
+    --results-path "$RUN_DUPLICATE_JSONL" \
+    --output json \
+    -- /bin/sh -c 'cat "$1" >> "$2"' \
+    _ "$BASE" "$RUN_DUPLICATE_JSONL" >"$WORK/run-duplicate-jsonl.json"
+assert_json "$WORK/run-duplicate-jsonl.json" \
+    'len(d["artifacts"]) == 1 and d["artifacts"][0]["resultID"] == "BASELINE"' \
+    "JSONL run preserves an appended duplicate artifact"
+
 SAME_TARGET="$WORK/same-metadata.xcevalresult"
 touch -t 202401010101 "$WORK/same-a.xcevalresult" "$WORK/same-b.xcevalresult"
 cp -p "$WORK/same-a.xcevalresult" "$SAME_TARGET"

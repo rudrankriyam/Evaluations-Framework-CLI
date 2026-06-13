@@ -111,3 +111,42 @@ func artifactSnapshotsHashContents() throws {
 
     #expect(before[file.path] != after[file.path])
 }
+
+@Test("Artifact snapshots return only appended JSONL results")
+func artifactSnapshotsFilterExistingJSONLines() throws {
+    let file = FileManager.default.temporaryDirectory
+        .appendingPathComponent("xceval-snapshot-\(UUID().uuidString).jsonl")
+    defer { try? FileManager.default.removeItem(at: file) }
+    let first = #"{"resultID":"FIRST","results":[]}"#
+    let second = #"{"resultID":"SECOND","results":[]}"#
+
+    try Data("\(first)\n".utf8).write(to: file)
+    let before = artifactSnapshot(at: file)
+    try Data("\(first)\n\(second)\n".utf8).write(to: file)
+    let artifacts = try loadArtifacts(path: file.path)
+    let changed = artifactsAddedOrChanged(
+        artifacts,
+        comparedTo: before[file.path]
+    )
+
+    #expect(changed.map(\.resultID) == ["SECOND"])
+}
+
+@Test("Artifact snapshots preserve appended duplicate JSONL results")
+func artifactSnapshotsPreserveAppendedDuplicates() throws {
+    let file = FileManager.default.temporaryDirectory
+        .appendingPathComponent("xceval-snapshot-\(UUID().uuidString).jsonl")
+    defer { try? FileManager.default.removeItem(at: file) }
+    let artifact = #"{"resultID":"DUPLICATE","results":[]}"#
+
+    try Data("\(artifact)\n".utf8).write(to: file)
+    let before = artifactSnapshot(at: file)
+    try Data("\(artifact)\n\(artifact)\n".utf8).write(to: file)
+    let artifacts = try loadArtifacts(path: file.path)
+    let changed = artifactsAddedOrChanged(
+        artifacts,
+        comparedTo: before[file.path]
+    )
+
+    #expect(changed.map(\.resultID) == ["DUPLICATE"])
+}
