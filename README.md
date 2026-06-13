@@ -5,10 +5,10 @@
 > Apple command or product, Apple does not use it as the public name of the
 > framework, and it is not affiliated with or endorsed by Apple.
 
-`xceval` is an agent-friendly command-line interface for the complete runnable
-lifecycle around Apple Evaluations: launch typed evaluation producers, drive
-Xcode tests, export attachments, inspect results, stream samples, extract
-datasets, compare runs, validate collections, and enforce explicit CI gates.
+`xceval` is an unofficial command-line toolkit for automating the result
+lifecycle around Apple Evaluations: run existing typed evaluation producers,
+drive Xcode tests, export attachments, inspect and filter results, compare runs,
+validate collections, and enforce explicit CI gates.
 
 ## Why This Exists
 
@@ -21,14 +21,37 @@ xcrun xcresulttool export evaluations \
 ```
 
 That command extracts attachments, but it does not run tests, inspect,
-normalize, validate, query, compare, convert, or gate their contents for agents.
-`xceval` fills that tooling gap.
+normalize, validate, query, compare, convert, or gate their contents for
+scripts, CI, and other developer tools. `xceval` fills that tooling gap.
 
 The CLI deliberately does **not** link `Evaluations.framework`. Artifact
 inspection uses the documented JSON files directly, so it remains useful when
 Xcode 27 is not installed and avoids binding automation to beta framework
 round-trip behavior. Typed framework code still runs in your app, package, or
 tests; `xceval run` and `xceval test` orchestrate those producers.
+
+## Scope
+
+`xceval` does **not** author an evaluation or benchmark. Typed datasets,
+subjects, evaluators, model judges, tool expectations, and model execution
+remain in Swift code owned by the app, package, or benchmark harness.
+
+The CLI begins at one of two boundaries:
+
+1. An executable that can save `.xcevalresult` files.
+2. An Xcode test that attaches evaluation results with Swift Testing.
+
+| Workflow | Owner |
+| --- | --- |
+| Define datasets, subjects, evaluators, judges, tools, and aggregation | App or package using `Evaluations.framework` |
+| Invoke the model and record deployment-specific benchmark measurements | App-specific producer or benchmark harness |
+| Launch an existing producer and collect changed results | `xceval run` |
+| Run Xcode tests and export attached results | `xceval test` |
+| Inspect, filter, normalize, validate, compare, convert, and gate persisted results | `xceval` |
+
+This makes `xceval` useful as shared automation after a project has adopted
+Apple Evaluations. It does not currently scaffold the typed Swift code required
+to create a new evaluation.
 
 ## Build
 
@@ -53,7 +76,7 @@ brew install xceval
 ## First Commands
 
 ```bash
-# Let an agent discover every supported framework workflow and boundary.
+# Print supported operations and producer-owned boundaries.
 xceval capabilities --output json
 
 # Discover Xcode 27 even when it lives in ~/Downloads.
@@ -74,7 +97,7 @@ xceval inspect Result.xcevalresult --output json --pretty
 # Preserve Apple's exact JSON document.
 xceval inspect Result.xcevalresult --output raw-json
 
-# Stream one normalized sample per line to an agent.
+# Stream one normalized sample per line.
 xceval samples Result.xcevalresult --output jsonl
 
 # Focus on rows containing a failing metric.
@@ -122,7 +145,7 @@ Text is the default in an interactive terminal. JSON is the default when output
 is piped. Use `-` as an input path to read a result or collection from stdin.
 Use `--output text|json|jsonl|raw-json|apple-json` where supported.
 
-## Framework Coverage
+## Framework Boundaries
 
 A universal binary cannot construct every `Evaluation` itself. Framework types
 such as the sample, subject, expected value, tools, model judge, dimensions,
@@ -130,7 +153,9 @@ credentials, and synthetic-data validator are generic Swift code compiled into
 the owning app or package. Claiming otherwise would require `xceval` to guess
 application behavior.
 
-`xceval` instead covers every capability at the correct boundary:
+`xceval` instead interoperates with framework capabilities at explicit
+boundaries. Rows marked as producer-owned still require app-specific Swift code;
+the CLI only launches that code and consumes its persisted output.
 
 | Evaluations capability | `xceval` handling |
 | --- | --- |
@@ -146,10 +171,10 @@ application behavior.
 | Xcode evaluation reports | Export with Apple’s `xcresulttool` through `export` or `test` |
 
 Run `xceval capabilities --output json` for the same matrix in a stable,
-machine-readable form so an agent can choose the right command without reading
+machine-readable form so scripts can inspect command boundaries without parsing
 this README.
 
-## Stable Agent Output
+## Stable Machine-Readable Output
 
 Normalized JSON uses the envelope version `xceval/v1`. `inspect` exposes:
 
@@ -161,7 +186,7 @@ Normalized JSON uses the envelope version `xceval/v1`. `inspect` exposes:
 - Response, expected value, evaluator kind, metric kind, value, and rationale.
 - Unknown nonmetric columns without discarding them.
 
-`--output raw-json` returns Apple's document unchanged. This gives agents a
+`--output raw-json` returns Apple's document unchanged. This gives automation a
 stable default while preserving an escape hatch as Apple's beta schema evolves.
 
 Collections can be a single `.xcevalresult`, a JSONL file produced by
@@ -221,10 +246,10 @@ owns orchestration and generic result behavior:
 3. `xceval` then validates, lists, inspects, filters, profiles, extracts,
    compares, converts, and gates those artifacts without opening Xcode.
 
-This keeps the CLI reusable across Foundation Models, server models, agentic
-tool calling, deterministic systems, and custom stochastic systems.
+This keeps the CLI reusable across Foundation Models, server models,
+tool-calling systems, deterministic systems, and custom stochastic systems.
 
-## Agent And CI Pattern
+## Automation And CI Pattern
 
 ```bash
 set -o pipefail

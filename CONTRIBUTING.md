@@ -28,4 +28,4 @@ binding the CLI to a beta framework ABI.
 - Keep command and JSON schema changes intentional and documented.
 - Add fixtures or focused tests for new artifact shapes.
 - Preserve unknown Apple JSON fields rather than rejecting future additions.
-- Keep text output readable and JSON output deterministic for agents.
+- Keep text output readable and JSON output deterministic for scripts and CI.
