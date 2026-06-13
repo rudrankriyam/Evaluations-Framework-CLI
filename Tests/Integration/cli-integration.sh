@@ -594,6 +594,18 @@ assert_json "$WORK/run-working-directory.json" \
     'd["workingDirectory"].endswith("producer working directory") and d["workingDirectory"] in d["process"]["standardOutput"] and len(d["artifacts"]) == 1' \
     "producer working directory and single-file result path"
 
+RELATIVE_WORKING_DIRECTORY="$WORK/relative producer directory"
+mkdir -p "$RELATIVE_WORKING_DIRECTORY"
+"$BIN" run \
+    --results-path relative-results \
+    --working-directory "$RELATIVE_WORKING_DIRECTORY" \
+    --output json \
+    -- /bin/sh -c 'mkdir -p relative-results; cp "$1" relative-results/result.xcevalresult' \
+    _ "$BASE" >"$WORK/run-relative-results.json"
+assert_json "$WORK/run-relative-results.json" \
+    'd["resultsPath"].endswith("relative producer directory/relative-results") and len(d["artifacts"]) == 1' \
+    "relative results path uses producer working directory"
+
 SAME_TARGET="$WORK/same-metadata.xcevalresult"
 touch -t 202401010101 "$WORK/same-a.xcevalresult" "$WORK/same-b.xcevalresult"
 cp -p "$WORK/same-a.xcevalresult" "$SAME_TARGET"
@@ -617,6 +629,8 @@ expect_failure "test requires xcodebuild arguments" \
     "$BIN" test --output json
 expect_failure "test reserves result bundle path" \
     "$BIN" test --output json -- -resultBundlePath "$WORK/result.xcresult" test
+expect_failure "test reserves combined result bundle path" \
+    "$BIN" test --output json -- "-resultBundlePath=$WORK/result.xcresult" test
 expect_failure "export rejects missing xcresult" \
     "$BIN" export "$WORK/missing.xcresult" --output json
 expect_failure "schema distinguishes invalid Xcode path" \

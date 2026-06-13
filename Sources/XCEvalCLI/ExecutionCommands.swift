@@ -52,7 +52,7 @@ struct RunCommand: ParsableCommand {
             )
         }
         let output = try outputOptions.resolve()
-        let resultsURL = expandedURL(resultsPath)
+        let resultsURL = resolvedResultsURL()
         let before = artifactSnapshot(at: resultsURL)
         let process = try ProcessRunner.run(
             executable: URL(fileURLWithPath: "/usr/bin/env"),
@@ -90,6 +90,19 @@ struct RunCommand: ParsableCommand {
                 """
             )
         }
+    }
+
+    private func resolvedResultsURL() -> URL {
+        let expandedPath = (resultsPath as NSString).expandingTildeInPath
+        if (expandedPath as NSString).isAbsolutePath {
+            return expandedURL(expandedPath)
+        }
+        if let workingDirectory {
+            return expandedURL(workingDirectory)
+                .appendingPathComponent(expandedPath)
+                .standardizedFileURL
+        }
+        return expandedURL(expandedPath)
     }
 
     private func emit(
@@ -186,7 +199,11 @@ struct TestCommand: ParsableCommand {
                 "Provide xcodebuild arguments after '--'."
             )
         }
-        guard !xcodebuildArguments.contains("-resultBundlePath") else {
+        let includesResultBundlePath = xcodebuildArguments.contains {
+            $0 == "-resultBundlePath"
+                || $0.hasPrefix("-resultBundlePath=")
+        }
+        guard !includesResultBundlePath else {
             throw ValidationError(
                 "Use --result-bundle-path instead of passing -resultBundlePath."
             )
