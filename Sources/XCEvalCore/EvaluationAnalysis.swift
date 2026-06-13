@@ -13,6 +13,10 @@ public struct EvaluationMetricProfile: Codable, Equatable, Sendable {
     public let minimum: Double?
     public let maximum: Double?
     public let mean: Double?
+    public let median: Double?
+    public let variance: Double?
+    public let standardDeviation: Double?
+    public let numericValues: [Double]
 }
 
 public struct EvaluationDatasetRecord: Codable, Equatable, Sendable {
@@ -84,6 +88,21 @@ extension EvaluationArtifact {
             let values = metrics[name] ?? []
             let numericValues = values.compactMap(\.value?.doubleValue)
             let total = numericValues.reduce(0, +)
+            let mean =
+                numericValues.isEmpty
+                ? nil
+                : total / Double(numericValues.count)
+            let variance = mean.map { mean in
+                guard numericValues.count > 1 else { return 0.0 }
+                let squaredDifferences = numericValues.reduce(0.0) {
+                    partialResult,
+                    value in
+                    let difference = value - mean
+                    return partialResult + difference * difference
+                }
+                return squaredDifferences
+                    / Double(numericValues.count - 1)
+            }
             return EvaluationMetricProfile(
                 name: name,
                 evaluatorKinds: Array(
@@ -100,9 +119,11 @@ extension EvaluationArtifact {
                 numericCount: numericValues.count,
                 minimum: numericValues.min(),
                 maximum: numericValues.max(),
-                mean: numericValues.isEmpty
-                    ? nil
-                    : total / Double(numericValues.count)
+                mean: mean,
+                median: median(of: numericValues),
+                variance: variance,
+                standardDeviation: variance.map(sqrt),
+                numericValues: numericValues
             )
         }
     }
@@ -248,6 +269,238 @@ extension EvaluationSample {
         guard let data = try? responseValue.encodedData() else { return nil }
         return String(data: data, encoding: .utf8)
     }
+
+    public var subjectExpectedDifferences: [EvaluationValueDifference] {
+        guard
+            let responseValue,
+            let expected,
+            expected != .null
+        else {
+            return []
+        }
+        return valueDifferences(
+            subject: responseValue,
+            expected: expected,
+            path: "$"
+        )
+    }
+}
+
+public enum EvaluationValueDifferenceKind: String, Codable, Sendable {
+    case typeMismatch = "type-mismatch"
+    case valueMismatch = "value-mismatch"
+    case arrayCountMismatch = "array-count-mismatch"
+    case missingFromSubject = "missing-from-subject"
+    case unexpectedInSubject = "unexpected-in-subject"
+}
+
+public struct EvaluationValueDifference: Codable, Equatable, Sendable {
+    public let path: String
+    public let kind: EvaluationValueDifferenceKind
+    public let message: String
+    public let subject: JSONValue?
+    public let expected: JSONValue?
+}
+
+private func median(of values: [Double]) -> Double? {
+    guard !values.isEmpty else { return nil }
+    let sorted = values.sorted()
+    let middle = sorted.count / 2
+    if sorted.count.isMultiple(of: 2) {
+        return (sorted[middle - 1] + sorted[middle]) / 2
+    }
+    return sorted[middle]
+}
+
+private func valueDifferences(
+    subject: JSONValue,
+    expected: JSONValue,
+    path: String
+) -> [EvaluationValueDifference] {
+    switch (subject, expected) {
+    case (.null, .null):
+        return []
+    case (.bool(let subject), .bool(let expected)):
+        return scalarDifference(
+            subject: .bool(subject),
+            expected: .bool(expected),
+            path: path,
+            equal: subject == expected
+        )
+    case (.integer(let subject), .integer(let expected)):
+        return scalarDifference(
+            subject: .integer(subject),
+            expected: .integer(expected),
+            path: path,
+            equal: subject == expected
+        )
+    case (.number(let subject), .number(let expected)):
+        return scalarDifference(
+            subject: .number(subject),
+            expected: .number(expected),
+            path: path,
+            equal: subject == expected
+        )
+    case (.integer(let subject), .number(let expected)):
+        return scalarDifference(
+            subject: .integer(subject),
+            expected: .number(expected),
+            path: path,
+            equal: Double(subject) == expected
+        )
+    case (.number(let subject), .integer(let expected)):
+        return scalarDifference(
+            subject: .number(subject),
+            expected: .integer(expected),
+            path: path,
+            equal: subject == Double(expected)
+        )
+    case (.string(let subject), .string(let expected)):
+        return scalarDifference(
+            subject: .string(subject),
+            expected: .string(expected),
+            path: path,
+            equal: subject == expected
+        )
+    case (.array(let subject), .array(let expected)):
+        var differences: [EvaluationValueDifference] = []
+        if subject.count != expected.count {
+            differences.append(
+                EvaluationValueDifference(
+                    path: path,
+                    kind: .arrayCountMismatch,
+                    message: """
+                        Subject has \(subject.count) item(s); expected has \
+                        \(expected.count).
+                        """,
+                    subject: .integer(Int64(subject.count)),
+                    expected: .integer(Int64(expected.count))
+                )
+            )
+        }
+        for index in 0..<min(subject.count, expected.count) {
+            differences.append(
+                contentsOf: valueDifferences(
+                    subject: subject[index],
+                    expected: expected[index],
+                    path: "\(path)[\(index)]"
+                )
+            )
+        }
+        if subject.count < expected.count {
+            for index in subject.count..<expected.count {
+                differences.append(
+                    EvaluationValueDifference(
+                        path: "\(path)[\(index)]",
+                        kind: .missingFromSubject,
+                        message: "Expected array item is missing from the subject.",
+                        subject: nil,
+                        expected: expected[index]
+                    )
+                )
+            }
+        }
+        if expected.count < subject.count {
+            for index in expected.count..<subject.count {
+                differences.append(
+                    EvaluationValueDifference(
+                        path: "\(path)[\(index)]",
+                        kind: .unexpectedInSubject,
+                        message: "Subject contains an unexpected array item.",
+                        subject: subject[index],
+                        expected: nil
+                    )
+                )
+            }
+        }
+        return differences
+    case (.object(let subject), .object(let expected)):
+        var differences: [EvaluationValueDifference] = []
+        for key in expected.keys.sorted() {
+            let childPath = jsonPath(path, key: key)
+            guard let subjectValue = subject[key] else {
+                differences.append(
+                    EvaluationValueDifference(
+                        path: childPath,
+                        kind: .missingFromSubject,
+                        message: "Expected key is missing from the subject.",
+                        subject: nil,
+                        expected: expected[key]
+                    )
+                )
+                continue
+            }
+            differences.append(
+                contentsOf: valueDifferences(
+                    subject: subjectValue,
+                    expected: expected[key] ?? .null,
+                    path: childPath
+                )
+            )
+        }
+        for key in subject.keys.sorted() where expected[key] == nil {
+            differences.append(
+                EvaluationValueDifference(
+                    path: jsonPath(path, key: key),
+                    kind: .unexpectedInSubject,
+                    message: "Subject contains an unexpected key.",
+                    subject: subject[key],
+                    expected: nil
+                )
+            )
+        }
+        return differences
+    default:
+        return [
+            EvaluationValueDifference(
+                path: path,
+                kind: .typeMismatch,
+                message: "Subject and expected values use different JSON types.",
+                subject: subject,
+                expected: expected
+            )
+        ]
+    }
+}
+
+private func scalarDifference(
+    subject: JSONValue,
+    expected: JSONValue,
+    path: String,
+    equal: Bool
+) -> [EvaluationValueDifference] {
+    guard !equal else { return [] }
+    return [
+        EvaluationValueDifference(
+            path: path,
+            kind: .valueMismatch,
+            message: "Subject and expected values do not match.",
+            subject: subject,
+            expected: expected
+        )
+    ]
+}
+
+private func jsonPath(_ parent: String, key: String) -> String {
+    let identifier = key.unicodeScalars.allSatisfy {
+        CharacterSet.alphanumerics.union(
+            CharacterSet(charactersIn: "_")
+        ).contains($0)
+    }
+    if identifier,
+        key.unicodeScalars.first.map({
+            CharacterSet.letters.union(
+                CharacterSet(charactersIn: "_")
+            ).contains($0)
+        }) == true
+    {
+        return "\(parent).\(key)"
+    }
+    let escaped =
+        key
+        .replacingOccurrences(of: "\\", with: "\\\\")
+        .replacingOccurrences(of: "\"", with: "\\\"")
+    return "\(parent)[\"\(escaped)\"]"
 }
 
 public struct EvaluationGateRule: Codable, Equatable, Sendable {

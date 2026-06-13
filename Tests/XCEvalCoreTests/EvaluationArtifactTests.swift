@@ -135,6 +135,47 @@ func profilesMetrics() throws {
     #expect(accuracy.failCount == 1)
     #expect(accuracy.rationaleCount == 1)
     #expect(accuracy.numericCount == 0)
+
+    let score = try #require(
+        artifact.metricProfiles.first { $0.name == "Score" }
+    )
+    #expect(score.numericValues == [0.8, 0.2])
+    #expect(score.mean == 0.5)
+    #expect(score.median == 0.5)
+    #expect(abs(try #require(score.variance) - 0.18) < 0.000_001)
+    #expect(
+        abs(try #require(score.standardDeviation) - sqrt(0.18))
+            < 0.000_001
+    )
+}
+
+@Test("Subject and expected values expose structural Xcode-style issues")
+func reportsSubjectExpectedDifferences() throws {
+    let artifact = try EvaluationArtifact(
+        data: Data(subjectExpectedFixture.utf8)
+    )
+    let differences = try #require(
+        artifact.samples.first
+    ).subjectExpectedDifferences
+
+    #expect(
+        differences.contains {
+            $0.path == "$.tags"
+                && $0.kind == .arrayCountMismatch
+        }
+    )
+    #expect(
+        differences.contains {
+            $0.path == "$.tags[1]"
+                && $0.kind == .valueMismatch
+        }
+    )
+    #expect(
+        differences.contains {
+            $0.path == "$.metadata.language"
+                && $0.kind == .missingFromSubject
+        }
+    )
 }
 
 @Test("Dataset extraction supports rich records and Apple's pair shape")
@@ -264,7 +305,7 @@ private let fixture = #"""
       "endTime": "2026-06-13T20:00:00Z",
       "durationInMilliseconds": 12,
       "evaluationInfo": {"Model": "Example"},
-      "reportMetadata": {"ColumnOrdering": ["Input", "Response", "Expected", "Accuracy"]},
+      "reportMetadata": {"ColumnOrdering": ["Input", "Response", "Expected", "Accuracy", "Score"]},
       "summary": [
         {
           "Mean of Accuracy":{"group":"Quality","operation":{"metric":"Accuracy","type":"mean"},"value":0.5},
@@ -276,7 +317,8 @@ private let fixture = #"""
           "Input": "{\"input\":{\"prompt\":\"Say hello\"},\"output\":{\"value\":\"hello\"}}",
           "Response": {"typeName": "String", "value": "hello"},
           "Expected": "hello",
-          "Accuracy": {"evaluatorKind": "custom", "kind": "pass", "value": true}
+          "Accuracy": {"evaluatorKind": "custom", "kind": "pass", "value": true},
+          "Score": {"evaluatorKind": "custom", "kind": "score", "value": 0.8}
         },
         {
           "Input": "{\"input\":{\"prompt\":\"Say hello\"},\"output\":{\"value\":\"hello\"}}",
@@ -287,7 +329,8 @@ private let fixture = #"""
             "kind": "fail",
             "value": false,
             "rationale": "Expected hello."
-          }
+          },
+          "Score": {"evaluatorKind": "custom", "kind": "score", "value": 0.2}
         }
       ]
     }
@@ -312,5 +355,26 @@ private let duplicateSummaryCandidate = #"""
         {"Mean Score":{"group":"Quality","operation":{"metric":"Score","type":"mean"},"value":0.65}}
       ],
       "results": []
+    }
+    """#
+
+private let subjectExpectedFixture = #"""
+    {
+      "results": [
+        {
+          "Input": "{\"input\":{\"prompt\":\"Tag this\"}}",
+          "Response": {
+            "typeName": "BookTags",
+            "value": {
+              "tags": ["horror", "identity"],
+              "metadata": {}
+            }
+          },
+          "Expected": {
+            "tags": ["horror", "gothic", "identity"],
+            "metadata": {"language": "en"}
+          }
+        }
+      ]
     }
     """#

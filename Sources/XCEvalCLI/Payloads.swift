@@ -156,6 +156,42 @@ struct MetricsPayload: Encodable {
     }
 }
 
+struct EvaluationSampleReportPayload: Encodable {
+    let sample: EvaluationSample
+    let failedMetrics: [String]
+    let issues: [EvaluationValueDifference]
+
+    init(sample: EvaluationSample) {
+        self.sample = sample
+        failedMetrics = sample.metrics.filter(\.failed).map(\.name)
+        issues = sample.subjectExpectedDifferences
+    }
+}
+
+struct ReportPayload: Encodable {
+    let schemaVersion = EvaluationArtifact.schemaVersion
+    let command = "report"
+    let artifact: ArtifactPayload
+    let profiles: [EvaluationMetricProfile]
+    let samples: [EvaluationSampleReportPayload]
+    let baseline: ArtifactIdentity?
+    let aggregateComparison: [EvaluationMetricComparison]?
+
+    init(
+        artifact: EvaluationArtifact,
+        baseline: EvaluationArtifact? = nil
+    ) {
+        self.artifact = ArtifactPayload(
+            artifact: artifact,
+            includeSamples: false
+        )
+        profiles = artifact.metricProfiles
+        samples = artifact.samples.map(EvaluationSampleReportPayload.init)
+        self.baseline = baseline.map(ArtifactIdentity.init)
+        aggregateComparison = baseline?.comparisons(with: artifact)
+    }
+}
+
 struct DatasetPayload: Encodable {
     let schemaVersion = EvaluationArtifact.schemaVersion
     let command = "dataset"
@@ -306,4 +342,41 @@ struct TestPayload: Encodable {
         self.manifest = manifest
         self.exportError = exportError
     }
+}
+
+struct PipelineStepPayload: Encodable {
+    let name: String
+    let command: [String]
+    let status: Int32
+    let standardOutputPath: String
+    let standardErrorPath: String
+}
+
+struct PipelinePayload: Encodable {
+    let schemaVersion = "xceval.pipeline-report/v1"
+    let command = "pipeline"
+    let name: String
+    let manifestPath: String
+    let workingDirectory: String
+    let resultsPath: String
+    let artifactsDirectory: String
+    let xcode: XcodeInstallation?
+    let steps: [PipelineStepPayload]
+    let artifact: ArtifactIdentity?
+    let validation: ArtifactValidationPayload?
+    let gates: [EvaluationGateResult]
+    let aggregateComparison: [EvaluationMetricComparison]
+    let outputs: [String: String]
+    let passed: Bool
+    let errors: [String]
+}
+
+struct InitPayload: Encodable {
+    let schemaVersion = "xceval.init/v1"
+    let command = "init"
+    let name: String
+    let packageName: String
+    let executableName: String
+    let destination: String
+    let files: [String]
 }

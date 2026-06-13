@@ -297,14 +297,14 @@ mark "semantic version"
 "$BIN" >"$WORK/root.txt"
 assert_contains "$WORK/root.txt" "unofficial CLI" "root guidance"
 
-for command in capabilities doctor list validate inspect samples metrics dataset compare gate convert run test export schema; do
+for command in init capabilities doctor list validate inspect samples metrics report dataset compare gate convert pipeline run test export schema; do
     "$BIN" "$command" --help >"$WORK/help-$command.txt"
     assert_contains "$WORK/help-$command.txt" "USAGE:" "help: $command"
 done
 
 "$BIN" capabilities --xcode "$WORK/missing.app" --output json >"$WORK/capabilities.json"
 assert_json "$WORK/capabilities.json" \
-    'len(d["capabilities"]) == 13 and sorted(set(x["support"] for x in d["capabilities"])) == ["native", "orchestrated", "producer-owned"]' \
+    'len(d["capabilities"]) == 15 and sorted(set(x["support"] for x in d["capabilities"])) == ["native", "orchestrated", "producer-owned"]' \
     "capability boundary matrix"
 
 "$BIN" doctor --xcode "$WORK/missing.app" --output json >"$WORK/doctor.json"
@@ -443,8 +443,13 @@ expect_failure "JSONL rejects pretty printing" \
 
 "$BIN" metrics "$BASE" --output json >"$WORK/metrics.json"
 assert_json "$WORK/metrics.json" \
-    'len(d["profiles"]) == 2 and next(x for x in d["profiles"] if x["name"] == "Accuracy")["failCount"] == 1 and len(d["summary"]) == 2' \
+    'len(d["profiles"]) == 2 and next(x for x in d["profiles"] if x["name"] == "Accuracy")["failCount"] == 1 and next(x for x in d["profiles"] if x["name"] == "Score")["numericValues"] == [0.8, 0.2] and len(d["summary"]) == 2' \
     "metric profiles and summaries"
+
+"$BIN" report "$BASE" --baseline "$CANDIDATE" --output json >"$WORK/report.json"
+assert_json "$WORK/report.json" \
+    'len(d["samples"]) == 3 and d["samples"][1]["failedMetrics"] == ["Accuracy"] and d["samples"][1]["issues"][0]["kind"] == "value-mismatch" and len(d["aggregateComparison"]) == 2' \
+    "Xcode-style machine-readable report"
 
 "$BIN" dataset "$BASE" --output json >"$WORK/dataset.json"
 assert_json "$WORK/dataset.json" \
@@ -644,6 +649,170 @@ expect_failure "malformed produced artifact" \
     --results-path "$WORK/malformed-produced.xcevalresult" \
     --output json \
     -- /bin/cp "$WORK/scalar.json" "$WORK/malformed-produced.xcevalresult"
+
+INIT_DIRECTORY="$WORK/GeneratedFeatureEvaluations"
+"$BIN" init "Generated Feature" \
+    --path "$INIT_DIRECTORY" \
+    --output json >"$WORK/init.json"
+assert_json "$WORK/init.json" \
+    'd["packageName"] == "GeneratedFeatureEvaluations" and d["executableName"] == "generated-feature-evaluate" and len(d["files"]) == 8' \
+    "evaluation starter generation"
+test -f "$INIT_DIRECTORY/xceval.pipeline.json"
+test -f "$INIT_DIRECTORY/Sources/GeneratedFeatureEvaluations/GeneratedFeatureEvaluation.swift"
+mark "generated starter files"
+expect_failure "init protects existing destination" \
+    "$BIN" init "Generated Feature" --path "$INIT_DIRECTORY" --output json
+RESERVED_INIT_DIRECTORY="$WORK/ReservedEvaluation"
+"$BIN" init "Evaluation" \
+    --path "$RESERVED_INIT_DIRECTORY" \
+    --output json >"$WORK/init-reserved.json"
+test -f \
+    "$RESERVED_INIT_DIRECTORY/Sources/EvaluationEvaluations/GeneratedEvaluation.swift"
+mark "generated starter avoids Evaluation protocol collision"
+
+PIPELINE_ROOT="$WORK/pipelines"
+mkdir -p "$PIPELINE_ROOT"
+python3 - "$PIPELINE_ROOT" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+
+def write(name, value):
+    directory = root / name
+    directory.mkdir(parents=True)
+    with (directory / "xceval.pipeline.json").open("w", encoding="utf-8") as handle:
+        json.dump(value, handle, indent=2)
+        handle.write("\n")
+
+base = {
+    "schemaVersion": "xceval.pipeline/v1",
+    "name": "Fixture pipeline",
+    "workingDirectory": ".",
+    "artifactsDirectory": "artifacts",
+    "resultsPath": "results",
+    "steps": [{
+        "name": "produce",
+        "command": [
+            "/bin/sh",
+            "-c",
+            'mkdir -p results; /bin/cp "${SOURCE}" results/result.xcevalresult',
+        ],
+    }],
+    "selection": {"resultID": "BASELINE"},
+    "baseline": "${BASELINE}",
+    "gates": ["Mean of Accuracy>=0.5"],
+}
+write("success", base)
+
+gate = dict(base)
+gate["name"] = "Failing gate pipeline"
+gate["artifactsDirectory"] = "gate-artifacts"
+gate["resultsPath"] = "gate-results"
+gate["steps"] = [{
+    "name": "produce",
+    "command": [
+        "/bin/sh",
+        "-c",
+        'mkdir -p gate-results; /bin/cp "${SOURCE}" gate-results/result.xcevalresult',
+    ],
+}]
+gate["gates"] = ["Mean of Accuracy>0.5"]
+write("gate-failure", gate)
+
+write("step-failure", {
+    "schemaVersion": "xceval.pipeline/v1",
+    "name": "Step failure pipeline",
+    "artifactsDirectory": "artifacts",
+    "resultsPath": "results",
+    "steps": [{
+        "name": "explode",
+        "command": ["/bin/sh", "-c", "printf failure >&2; exit 7"],
+    }],
+})
+
+write("existing", {
+    "schemaVersion": "xceval.pipeline/v1",
+    "name": "Existing artifact pipeline",
+    "artifactsDirectory": "artifacts",
+    "resultsPath": "${SOURCE}",
+    "selection": {"resultID": "BASELINE"},
+})
+PY
+
+SUCCESS_MANIFEST="$PIPELINE_ROOT/success/xceval.pipeline.json"
+"$BIN" pipeline "$SUCCESS_MANIFEST" \
+    --set "SOURCE=$BASE" \
+    --set "BASELINE=$BASE" \
+    --output json >"$WORK/pipeline-success.json"
+assert_json "$WORK/pipeline-success.json" \
+    'd["passed"] is True and len(d["steps"]) == 1 and len(d["aggregateComparison"]) == 2 and d["gates"][0]["passed"] is True and set(d["outputs"]) >= {"result", "report", "metrics", "failures", "dataset", "promptResponse", "validation", "comparison", "gates"}' \
+    "complete evaluation pipeline"
+PIPELINE_ARTIFACTS="$PIPELINE_ROOT/success/artifacts"
+test -f "$PIPELINE_ARTIFACTS/pipeline-report.json"
+test -f "$PIPELINE_ARTIFACTS/report.json"
+test -f "$PIPELINE_ARTIFACTS/failures.jsonl"
+assert_json "$PIPELINE_ARTIFACTS/report.json" \
+    'd["samples"][1]["issues"][0]["kind"] == "value-mismatch" and next(x for x in d["profiles"] if x["name"] == "Score")["numericValues"] == [0.8, 0.2]' \
+    "pipeline report contents"
+expect_failure "pipeline protects existing artifact directory" \
+    "$BIN" pipeline "$SUCCESS_MANIFEST" \
+        --set "SOURCE=$BASE" \
+        --set "BASELINE=$BASE" \
+        --output json
+"$BIN" pipeline "$SUCCESS_MANIFEST" \
+    --set "SOURCE=$BASE" \
+    --set "BASELINE=$BASE" \
+    --force \
+    --include-existing \
+    --output json >"$WORK/pipeline-force.json"
+assert_json "$WORK/pipeline-force.json" 'd["passed"] is True' "pipeline force rerun"
+
+expect_failure "pipeline failed gate" \
+    "$BIN" pipeline "$PIPELINE_ROOT/gate-failure/xceval.pipeline.json" \
+        --set "SOURCE=$BASE" \
+        --set "BASELINE=$BASE" \
+        --output json
+assert_json "$LAST_STDOUT" \
+    'd["passed"] is False and d["gates"][0]["passed"] is False and "One or more evaluation gates failed." in d["errors"]' \
+    "failed gate pipeline report"
+
+expect_status 7 "pipeline stage status propagation" \
+    "$BIN" pipeline "$PIPELINE_ROOT/step-failure/xceval.pipeline.json" \
+        --output json
+assert_json "$LAST_STDOUT" \
+    'd["passed"] is False and d["steps"][0]["status"] == 7 and "exited with status 7" in d["errors"][0]' \
+    "failed stage pipeline report"
+test -f "$PIPELINE_ROOT/step-failure/artifacts/logs/01-explode.stderr.log"
+mark "failed stage logs"
+
+expect_failure "pipeline unresolved variable" \
+    "$BIN" pipeline "$PIPELINE_ROOT/existing/xceval.pipeline.json" \
+        --include-existing \
+        --output json
+expect_failure "pipeline rejects malformed variable names" \
+    "$BIN" pipeline "$PIPELINE_ROOT/existing/xceval.pipeline.json" \
+        --set "1SOURCE=$BASE" \
+        --include-existing \
+        --output json
+assert_contains "$LAST_STDERR" "Invalid --set name" \
+    "pipeline variable name diagnostic"
+expect_failure "pipeline validates explicit Xcode override" \
+    "$BIN" pipeline "$PIPELINE_ROOT/existing/xceval.pipeline.json" \
+        --set "SOURCE=$BASE" \
+        --include-existing \
+        --xcode "$WORK/missing.app" \
+        --output json
+assert_contains "$LAST_STDERR" "not an Xcode.app" \
+    "pipeline invalid Xcode path diagnostic"
+"$BIN" pipeline "$PIPELINE_ROOT/existing/xceval.pipeline.json" \
+    --set "SOURCE=$BASE" \
+    --include-existing \
+    --output json >"$WORK/pipeline-existing.json"
+assert_json "$WORK/pipeline-existing.json" \
+    'd["passed"] is True and d["steps"] == [] and d["artifact"]["resultID"] == "BASELINE"' \
+    "pipeline analyzes existing artifact"
 
 expect_failure "run requires passthrough command" \
     "$BIN" run --results-path "$RUN_DIRECTORY" --output json

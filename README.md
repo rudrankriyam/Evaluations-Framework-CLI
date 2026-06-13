@@ -5,9 +5,9 @@
 > Apple command or product, Apple does not use it as the public name of the
 > framework, and it is not affiliated with or endorsed by Apple.
 
-`xceval` is an unofficial command-line toolkit for automating the result
-lifecycle around Apple Evaluations: run existing typed evaluation producers,
-drive Xcode tests, export attachments, inspect and filter results, compare runs,
+`xceval` is an unofficial command-line toolkit for Apple Evaluations workflows:
+scaffold a typed starter, run evaluation stages, drive Xcode tests, export
+attachments, reproduce the data behind Xcode's evaluation report, compare runs,
 validate collections, and enforce explicit CI gates.
 
 ## Why This Exists
@@ -20,9 +20,9 @@ xcrun xcresulttool export evaluations \
   --output-path ExportedEvaluations
 ```
 
-That command extracts attachments, but it does not run tests, inspect,
-normalize, validate, query, compare, convert, or gate their contents for
-scripts, CI, and other developer tools. `xceval` fills that tooling gap.
+That command extracts attachments, but it does not scaffold producers, run a
+multi-stage workflow, inspect, normalize, validate, query, compare, convert, or
+gate their contents for scripts and CI. `xceval` fills that tooling gap.
 
 The CLI deliberately does **not** link `Evaluations.framework`. Artifact
 inspection uses the documented JSON files directly, so it remains useful when
@@ -32,26 +32,29 @@ tests; `xceval run` and `xceval test` orchestrate those producers.
 
 ## Scope
 
-`xceval` does **not** author an evaluation or benchmark. Typed datasets,
-subjects, evaluators, model judges, tool expectations, and model execution
-remain in Swift code owned by the app, package, or benchmark harness.
+`xceval init` creates compilable typed boilerplate, but `xceval` cannot author
+the meaningful part of an evaluation for you. Representative datasets,
+feature-specific subjects, criteria, model judges, tool expectations, and model
+execution remain Swift code owned by the app, package, or benchmark harness.
 
-The CLI begins at one of two boundaries:
+The CLI can begin at one of three boundaries:
 
-1. An executable that can save `.xcevalresult` files.
-2. An Xcode test that attaches evaluation results with Swift Testing.
+1. A generated starter package from `xceval init`.
+2. An executable that can save `.xcevalresult` files.
+3. An Xcode test that attaches evaluation results with Swift Testing.
 
 | Workflow | Owner |
 | --- | --- |
+| Generate a working package, test, producer, dataset, and pipeline manifest | `xceval init` |
 | Define datasets, subjects, evaluators, judges, tools, and aggregation | App or package using `Evaluations.framework` |
 | Invoke the model and record deployment-specific benchmark measurements | App-specific producer or benchmark harness |
 | Launch an existing producer and collect changed results | `xceval run` |
 | Run Xcode tests and export attached results | `xceval test` |
+| Execute named stages and write one complete analysis directory | `xceval pipeline` |
 | Inspect, filter, normalize, validate, compare, convert, and gate persisted results | `xceval` |
 
-This makes `xceval` useful as shared automation after a project has adopted
-Apple Evaluations. It does not currently scaffold the typed Swift code required
-to create a new evaluation.
+This makes `xceval` useful both when adopting Apple Evaluations and after a
+project has built a mature evaluation suite.
 
 ## Build
 
@@ -66,7 +69,7 @@ The binary runs on macOS 14 or newer. Exporting from `.xcresult` requires an
 Xcode installation that provides `xcresulttool export evaluations`, currently
 Xcode 27.
 
-After the first tagged release, Homebrew is the primary install path:
+Homebrew is the primary install path:
 
 ```bash
 brew tap rudrankriyam/tap
@@ -76,6 +79,11 @@ brew install xceval
 ## First Commands
 
 ```bash
+# Create a compilable macOS 27 package and ready-to-run pipeline.
+xceval init SearchQuality
+cd SearchQualityEvaluations
+xceval pipeline
+
 # Print supported operations and producer-owned boundaries.
 xceval capabilities --output json
 
@@ -110,6 +118,9 @@ xceval samples Result.xcevalresult \
 # Profile pass, fail, score, ignore, numeric, and rationale counts.
 xceval metrics Result.xcevalresult --output json
 
+# Emit the machine-readable data behind Xcode's evaluation report.
+xceval report Result.xcevalresult --output json --pretty
+
 # Superset Apple's sample DatasetExtractor output.
 xceval dataset Result.xcevalresult --output apple-json --pretty
 
@@ -128,6 +139,9 @@ xceval convert ./runs --to jsonl \
 # Run an app-specific executable that saves .xcevalresult files.
 xceval run --results-path ./results -- \
   swift run MyEvaluationRunner
+
+# Run all producer and analysis stages declared in a versioned manifest.
+xceval pipeline xceval.pipeline.json
 
 # Run Swift Testing or XCTest through Xcode, then export attachments.
 xceval test --xcode ~/Downloads/Xcode-beta.app \
@@ -159,6 +173,7 @@ the CLI only launches that code and consumes its persisted output.
 
 | Evaluations capability | `xceval` handling |
 | --- | --- |
+| Starter package with JSON data, deterministic evaluators, `.evaluates`, direct persistence, and gates | Generate with `xceval init` |
 | `Evaluation`, custom `Evaluator`, and `Metric` | Run the typed producer with `xceval run` |
 | Swift Testing `.evaluates` | Run tests and export attachments with `xceval test` |
 | `ArrayLoader`, `JSONLoader`, and `StreamLoader` | Execute in producer code; inspect every stored row |
@@ -167,8 +182,9 @@ the CLI only launches that code and consumes its persisted output.
 | `ToolCallEvaluator`, trajectories, transcripts, and all argument matchers | Execute with the producer; filter failures and rationales with `samples` |
 | `SampleGenerator`, random or sliding-window strategies, and validators | Run the typed generator executable with `run --allow-empty` |
 | `saveJSON`, `loadJSON`, `saveJSONLines`, and `loadJSONLines` workflows | Read, validate, pack, split, and stream with `list`, `validate`, and `convert` |
-| Summary and detailed data frames | Normalize with `inspect`, `samples`, and `metrics` |
+| Summary and detailed data frames | Normalize with `inspect`, `samples`, `metrics`, and `report` |
 | Xcode evaluation reports | Export with Apple’s `xcresulttool` through `export` or `test` |
+| End-to-end producer, analysis, comparison, and policy workflow | Declare stages in `xceval.pipeline.json` and run `pipeline` |
 
 Run `xceval capabilities --output json` for the same matrix in a stable,
 machine-readable form so scripts can inspect command boundaries without parsing
@@ -185,6 +201,18 @@ Normalized JSON uses the envelope version `xceval/v1`. `inspect` exposes:
 - Decoded sample inputs when the `Input` column contains nested JSON.
 - Response, expected value, evaluator kind, metric kind, value, and rationale.
 - Unknown nonmetric columns without discarding them.
+
+`report` combines those rows with:
+
+- Exact numeric values for recreating distributions and histograms.
+- Pass, fail, score, ignore, and rationale counts per metric.
+- Median, sample variance, and sample standard deviation computed from persisted
+  numeric values.
+- Structural Subject-versus-Expected issues with JSON paths.
+- Optional baseline aggregate comparisons.
+
+This is the machine-readable substance of Xcode 27's evaluation report. The CLI
+does not attempt to reproduce Xcode's visual chart rendering.
 
 `--output raw-json` returns Apple's document unchanged. This gives automation a
 stable default while preserving an escape hatch as Apple's beta schema evolves.
@@ -245,31 +273,75 @@ owns orchestration and generic result behavior:
    evaluation attachments even when tests fail.
 3. `xceval` then validates, lists, inspects, filters, profiles, extracts,
    compares, converts, and gates those artifacts without opening Xcode.
+4. `xceval pipeline` composes those boundaries into a repeatable manifest and
+   writes logs plus every derived artifact into one directory.
 
 This keeps the CLI reusable across Foundation Models, server models,
 tool-calling systems, deterministic systems, and custom stochastic systems.
 
-## Automation And CI Pattern
+## Evaluation Pipeline
+
+A pipeline manifest makes Apple's evaluation lifecycle explicit:
+
+```json
+{
+  "schemaVersion": "xceval.pipeline/v1",
+  "name": "Search quality",
+  "workingDirectory": ".",
+  "artifactsDirectory": ".xceval/pipeline",
+  "resultsPath": ".xceval/results",
+  "requiresEvaluationsXcode": true,
+  "steps": [
+    {
+      "name": "evaluate",
+      "command": [
+        "/usr/bin/xcrun",
+        "swift",
+        "run",
+        "search-evaluate",
+        "--output",
+        ".xceval/results"
+      ]
+    }
+  ],
+  "baseline": "Baselines/search.xcevalresult",
+  "gates": [
+    "Mean of Accuracy>=0.9",
+    "Maximum of Latency<2"
+  ]
+}
+```
+
+Run it with:
 
 ```bash
-set -o pipefail
-
-xceval test \
-  --working-directory ./MyEvaluationPackage \
-  --result-bundle-path ./artifacts/Tests.xcresult \
-  --output-path ./artifacts/evaluations \
-  --output json \
-  -- -scheme MyEvaluationPackage-Package \
-     -destination 'platform=macOS' test \
-  > ./artifacts/test.json
-
-RESULT=$(jq -r '.exportedFiles[0]' ./artifacts/test.json)
-xceval validate "$RESULT" --strict --output json
-xceval gate "$RESULT" \
-  --rule "Mean of Accuracy>=0.9" \
-  --rule "Maximum of Latency<2" \
-  --output json
+xceval pipeline --set DATASET=Fixtures/holdout.json
 ```
+
+The output directory contains the selected native result, stage logs,
+`inspect.json`, `report.json`, `metrics.json`, `failures.jsonl`, `dataset.json`,
+Apple-compatible prompt-response data, validation, optional comparison, gate
+results, and `pipeline-report.json`.
+
+## Lessons From Apple's Sample
+
+Apple's Book Tracker sample demonstrates a complete loop rather than a single
+test:
+
+1. Start with curated golden examples.
+2. Generate and validate broader synthetic samples.
+3. Run deterministic evaluators for computable behavior.
+4. Use model judges only for subjective dimensions.
+5. Extract prompt-response pairs from persisted results.
+6. Calibrate judges against human labels with agreement statistics.
+7. Compare a baseline and one experimental change.
+8. Gate the aggregate result and keep failures as regression samples.
+
+`xceval init` covers the compilable starting structure. `xceval pipeline`
+covers production, extraction, analysis, comparison, and gates. Human labeling,
+domain-specific synthetic-data validation, and judge calibration remain
+project-owned because a generic CLI cannot decide what "good" means for a
+feature.
 
 ## Xcode Discovery
 

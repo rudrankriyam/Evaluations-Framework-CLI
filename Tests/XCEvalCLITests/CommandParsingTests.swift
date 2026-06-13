@@ -76,13 +76,64 @@ func parsesTestPassthrough() throws {
         ])
 }
 
+@Test("Report accepts a baseline and artifact selection")
+func parsesReportOptions() throws {
+    let command = try XCEvalRootCommand.parseAsRoot([
+        "report",
+        "results.jsonl",
+        "--result-id",
+        "CANDIDATE",
+        "--baseline",
+        "baseline.xcevalresult",
+        "--output",
+        "json"
+    ])
+    let report = try #require(command as? ReportCommand)
+
+    #expect(report.selection.resultID == "CANDIDATE")
+    #expect(report.baseline == "baseline.xcevalresult")
+}
+
+@Test("Pipeline parses variables and Xcode overrides")
+func parsesPipelineOptions() throws {
+    let command = try XCEvalRootCommand.parseAsRoot([
+        "pipeline",
+        "custom.pipeline.json",
+        "--set",
+        "RUN=result.json",
+        "--xcode",
+        "/Applications/Xcode-beta.app",
+        "--force"
+    ])
+    let pipeline = try #require(command as? PipelineCommand)
+
+    #expect(pipeline.manifestPath == "custom.pipeline.json")
+    #expect(pipeline.assignments == ["RUN=result.json"])
+    #expect(pipeline.xcode == "/Applications/Xcode-beta.app")
+    #expect(pipeline.force)
+}
+
+@Test("Init parses a custom destination")
+func parsesInitOptions() throws {
+    let command = try XCEvalRootCommand.parseAsRoot([
+        "init",
+        "Search Quality",
+        "--path",
+        "/tmp/SearchQualityEvaluations"
+    ])
+    let initializer = try #require(command as? InitCommand)
+
+    #expect(initializer.name == "Search Quality")
+    #expect(initializer.path == "/tmp/SearchQualityEvaluations")
+}
+
 @Test("Capabilities cover native, orchestrated, and producer-owned work")
 func exposesCapabilityBoundaries() throws {
     let capabilities = CapabilitiesPayload(
         selectedXcode: nil
     ).capabilities
 
-    #expect(capabilities.count == 13)
+    #expect(capabilities.count == 15)
     #expect(capabilities.contains { $0.support == .native })
     #expect(capabilities.contains { $0.support == .orchestrated })
     #expect(capabilities.contains { $0.support == .producerOwned })

@@ -35,6 +35,28 @@ struct CapabilitiesPayload: Encodable {
 
 private let runtimeCapabilityPayloads = [
     CapabilityPayload(
+        name: "Scaffold a typed evaluation package",
+        frameworkAPIs: [
+            "Evaluation",
+            "JSONLoader",
+            "Evaluator",
+            "Test.evaluates",
+            "EvaluationResult.saveJSON"
+        ],
+        support: .native,
+        command: "xceval init NAME",
+        boundary: """
+            Generates compilable boilerplate and a sample dataset. The \
+            feature subject, representative data, and meaningful criteria \
+            remain application-specific.
+            """,
+        automationUse: """
+            Start from a working producer, Swift Testing attachment, explicit \
+            gates, and pipeline manifest instead of wiring framework search \
+            paths and result persistence by hand.
+            """
+    ),
+    CapabilityPayload(
         name: "Define typed evaluations and custom evaluators",
         frameworkAPIs: [
             "Evaluation",
@@ -251,6 +273,25 @@ private let analysisCapabilityPayloads = [
 ]
 
 private let automationCapabilityPayloads = [
+    CapabilityPayload(
+        name: "Run a reproducible evaluation pipeline",
+        frameworkAPIs: [
+            "EvaluationResult persisted output",
+            "xcresulttool export evaluations"
+        ],
+        support: .orchestrated,
+        command: "xceval pipeline [MANIFEST]",
+        boundary: """
+            Typed evaluation stages remain normal commands. The manifest \
+            defines orchestration, artifact selection, analysis, comparison, \
+            and policy.
+            """,
+        automationUse: """
+            Produce one directory containing logs, the selected result, a \
+            normalized Xcode-style report, failures, datasets, comparisons, \
+            validation, and gate results.
+            """
+    ),
     CapabilityPayload(
         name: "Extract evaluation attachments",
         frameworkAPIs: ["xcresulttool export evaluations"],
