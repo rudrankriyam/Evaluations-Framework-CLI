@@ -134,7 +134,7 @@ extension EvaluationArtifact {
                 sampleIndex: sample.index,
                 prompt: sample.prompt,
                 response: sample.responseValue,
-                expected: sample.expected,
+                expected: sample.expectedValue,
                 input: sample.input
             )
         }
@@ -258,29 +258,35 @@ extension EvaluationSample {
     }
 
     public var responseValue: JSONValue? {
-        response?["value"] ?? response
+        (response?["value"] ?? response).map(normalizeStructuredJSONString)
+    }
+
+    public var expectedValue: JSONValue? {
+        expected.map(normalizeStructuredJSONString)
     }
 
     public var responseText: String? {
-        guard let responseValue else { return nil }
-        if let value = responseValue.stringValue {
+        guard let rawResponseValue = response?["value"] ?? response else {
+            return nil
+        }
+        if let value = rawResponseValue.stringValue {
             return value
         }
-        guard let data = try? responseValue.encodedData() else { return nil }
+        guard let data = try? rawResponseValue.encodedData() else { return nil }
         return String(data: data, encoding: .utf8)
     }
 
     public var subjectExpectedDifferences: [EvaluationValueDifference] {
         guard
             let responseValue,
-            let expected,
-            expected != .null
+            let expectedValue,
+            expectedValue != .null
         else {
             return []
         }
         return valueDifferences(
             subject: responseValue,
-            expected: expected,
+            expected: expectedValue,
             path: "$"
         )
     }
@@ -310,6 +316,17 @@ private func median(of values: [Double]) -> Double? {
         return (sorted[middle - 1] + sorted[middle]) / 2
     }
     return sorted[middle]
+}
+
+private func normalizeStructuredJSONString(_ value: JSONValue) -> JSONValue {
+    guard
+        let string = value.stringValue,
+        let decoded = JSONValue.decodeJSONString(string),
+        decoded.objectValue != nil || decoded.arrayValue != nil
+    else {
+        return value
+    }
+    return decoded
 }
 
 private func valueDifferences(

@@ -178,6 +178,30 @@ func reportsSubjectExpectedDifferences() throws {
     )
 }
 
+@Test("JSON-encoded structured values expose nested Xcode-style issues")
+func reportsEncodedSubjectExpectedDifferences() throws {
+    let artifact = try EvaluationArtifact(
+        data: Data(encodedSubjectExpectedFixture.utf8)
+    )
+    let sample = try #require(artifact.samples.first)
+    let differences = sample.subjectExpectedDifferences
+
+    #expect(sample.responseValue?["tags"]?.arrayValue?.count == 2)
+    #expect(sample.expectedValue?["tags"]?.arrayValue?.count == 3)
+    #expect(
+        differences.contains {
+            $0.path == "$.tags"
+                && $0.kind == .arrayCountMismatch
+        }
+    )
+    #expect(
+        differences.contains {
+            $0.path == "$.tags[1]"
+                && $0.kind == .valueMismatch
+        }
+    )
+}
+
 @Test("Dataset extraction supports rich records and Apple's pair shape")
 func extractsDataset() throws {
     let artifact = try EvaluationArtifact(data: Data(fixture.utf8))
@@ -374,6 +398,21 @@ private let subjectExpectedFixture = #"""
             "tags": ["horror", "gothic", "identity"],
             "metadata": {"language": "en"}
           }
+        }
+      ]
+    }
+    """#
+
+private let encodedSubjectExpectedFixture = #"""
+    {
+      "results": [
+        {
+          "Input": "{\"input\":{\"prompt\":\"Tag this\"}}",
+          "Response": {
+            "typeName": "BookTags",
+            "value": "{\"tags\":[\"horror\",\"identity\"]}"
+          },
+          "Expected": "{\"tags\":[\"horror\",\"gothic\",\"identity\"]}"
         }
       ]
     }
