@@ -76,8 +76,10 @@ jobs:
 
       - name: Create checksum
         run: |
-          shasum -a 256 "release/xceval_${VERSION}_macOS_universal" \
-            > "release/xceval_${VERSION}_checksums.txt"
+          cd release
+          shasum -a 256 "xceval_${VERSION}_macOS_universal" \
+            > "xceval_${VERSION}_checksums.txt"
+          shasum -a 256 --check "xceval_${VERSION}_checksums.txt"
 
       - name: Create GitHub release
         env:
@@ -121,7 +123,7 @@ jobs:
               # frozen_string_literal: true
 
               class Xceval < Formula
-                desc "Run and inspect Apple Evaluations workflows from the command line"
+                desc "Run and inspect Apple Evaluations workflows from the command-line"
                 homepage "https://github.com/rudrankriyam/Evaluations-Framework-CLI"
                 url "https://github.com/rudrankriyam/Evaluations-Framework-CLI/releases/download/{version}/xceval_{version}_macOS_universal"
                 version "{version}"
