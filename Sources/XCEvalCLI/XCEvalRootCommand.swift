@@ -13,8 +13,9 @@ struct XCEvalRootCommand: AsyncParsableCommand {
             emits stable machine-readable output for scripts, CI, and developer \
             tools.
             """,
-        version: "0.1.0",
+        version: "0.2.0",
         subcommands: [
+            InitCommand.self,
             CapabilitiesCommand.self,
             DoctorCommand.self,
             ListCommand.self,
@@ -22,10 +23,12 @@ struct XCEvalRootCommand: AsyncParsableCommand {
             InspectCommand.self,
             SamplesCommand.self,
             MetricsCommand.self,
+            ReportCommand.self,
             DatasetCommand.self,
             CompareCommand.self,
             GateCommand.self,
             ConvertCommand.self,
+            PipelineCommand.self,
             RunCommand.self,
             TestCommand.self,
             ExportCommand.self,
@@ -39,11 +42,14 @@ struct XCEvalRootCommand: AsyncParsableCommand {
             xceval is an unofficial CLI for Apple Evaluations workflows.
 
             Start with:
+              xceval init SearchQuality
               xceval capabilities
               xceval doctor
               xceval inspect Result.xcevalresult
+              xceval report Result.xcevalresult --output json
               xceval samples Result.xcevalresult --output jsonl
               xceval gate Result.xcevalresult --rule 'Mean of Accuracy>=0.9'
+              xceval pipeline
               xceval test -- -project App.xcodeproj -scheme App test
               xceval export Tests.xcresult
             """
