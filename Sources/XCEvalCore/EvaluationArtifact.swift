@@ -122,30 +122,69 @@ public struct EvaluationArtifact: Sendable {
     public func comparisons(
         with candidate: EvaluationArtifact
     ) -> [EvaluationMetricComparison] {
-        var baselineByName: [String: EvaluationSummaryMetric] = [:]
-        for metric in summaries {
-            baselineByName[metric.name] = metric
+        let baselineMetrics = summaryMetricsByOccurrence(summaries)
+        let candidateMetrics = summaryMetricsByOccurrence(
+            candidate.summaries
+        )
+        let baselineByOccurrence = Dictionary(
+            uniqueKeysWithValues: baselineMetrics
+        )
+        let candidateByOccurrence = Dictionary(
+            uniqueKeysWithValues: candidateMetrics
+        )
+        var occurrences: [SummaryMetricOccurrence] = []
+        var seen = Set<SummaryMetricOccurrence>()
+        for (occurrence, _) in baselineMetrics + candidateMetrics
+        where seen.insert(occurrence).inserted {
+            occurrences.append(occurrence)
         }
-        var candidateByName: [String: EvaluationSummaryMetric] = [:]
-        for metric in candidate.summaries {
-            candidateByName[metric.name] = metric
-        }
-        let names = Set(baselineByName.keys)
-            .union(candidateByName.keys)
-            .sorted()
 
-        return names.map { name in
-            let baseline = baselineByName[name]
-            let candidate = candidateByName[name]
+        return occurrences.map { occurrence in
+            let identity = occurrence.identity
             return EvaluationMetricComparison(
-                name: name,
-                group: candidate?.group ?? baseline?.group,
-                operationType: candidate?.operationType ?? baseline?.operationType,
-                sourceMetric: candidate?.sourceMetric ?? baseline?.sourceMetric,
-                baseline: baseline?.value,
-                candidate: candidate?.value
+                name: identity.name,
+                group: identity.group,
+                operationType: identity.operationType,
+                sourceMetric: identity.sourceMetric,
+                occurrence: occurrence.index,
+                baseline: baselineByOccurrence[occurrence]?.value,
+                candidate: candidateByOccurrence[occurrence]?.value
             )
         }
+    }
+}
+
+private struct SummaryMetricIdentity: Hashable {
+    let name: String
+    let group: String?
+    let operationType: String?
+    let sourceMetric: String?
+
+    init(_ metric: EvaluationSummaryMetric) {
+        name = metric.name
+        group = metric.group
+        operationType = metric.operationType
+        sourceMetric = metric.sourceMetric
+    }
+}
+
+private struct SummaryMetricOccurrence: Hashable {
+    let identity: SummaryMetricIdentity
+    let index: Int
+}
+
+private func summaryMetricsByOccurrence(
+    _ metrics: [EvaluationSummaryMetric]
+) -> [(SummaryMetricOccurrence, EvaluationSummaryMetric)] {
+    var counts: [SummaryMetricIdentity: Int] = [:]
+    return metrics.map { metric in
+        let identity = SummaryMetricIdentity(metric)
+        let index = counts[identity, default: 0] + 1
+        counts[identity] = index
+        return (
+            SummaryMetricOccurrence(identity: identity, index: index),
+            metric
+        )
     }
 }
 
@@ -236,6 +275,7 @@ public struct EvaluationMetricComparison: Encodable, Equatable, Sendable {
     public let group: String?
     public let operationType: String?
     public let sourceMetric: String?
+    public let occurrence: Int
     public let baseline: Double?
     public let candidate: Double?
 
@@ -254,6 +294,7 @@ public struct EvaluationMetricComparison: Encodable, Equatable, Sendable {
         case group
         case operationType
         case sourceMetric
+        case occurrence
         case baseline
         case candidate
         case delta
@@ -266,6 +307,7 @@ public struct EvaluationMetricComparison: Encodable, Equatable, Sendable {
         try container.encodeIfPresent(group, forKey: .group)
         try container.encodeIfPresent(operationType, forKey: .operationType)
         try container.encodeIfPresent(sourceMetric, forKey: .sourceMetric)
+        try container.encode(occurrence, forKey: .occurrence)
         try container.encode(baseline, forKey: .baseline)
         try container.encode(candidate, forKey: .candidate)
         try container.encode(delta, forKey: .delta)

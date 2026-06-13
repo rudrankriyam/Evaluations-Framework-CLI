@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import XCEvalCLI
@@ -85,4 +86,28 @@ func exposesCapabilityBoundaries() {
     #expect(capabilities.contains { $0.support == .native })
     #expect(capabilities.contains { $0.support == .orchestrated })
     #expect(capabilities.contains { $0.support == .producerOwned })
+}
+
+@Test("Artifact snapshots detect content changes with stable metadata")
+func artifactSnapshotsHashContents() throws {
+    let file = FileManager.default.temporaryDirectory
+        .appendingPathComponent("xceval-snapshot-\(UUID().uuidString).xcevalresult")
+    defer { try? FileManager.default.removeItem(at: file) }
+    let modificationDate = Date(timeIntervalSince1970: 1_700_000_000)
+
+    try Data("AAAA".utf8).write(to: file)
+    try FileManager.default.setAttributes(
+        [.modificationDate: modificationDate],
+        ofItemAtPath: file.path
+    )
+    let before = artifactSnapshot(at: file)
+
+    try Data("BBBB".utf8).write(to: file)
+    try FileManager.default.setAttributes(
+        [.modificationDate: modificationDate],
+        ofItemAtPath: file.path
+    )
+    let after = artifactSnapshot(at: file)
+
+    #expect(before[file.path] != after[file.path])
 }

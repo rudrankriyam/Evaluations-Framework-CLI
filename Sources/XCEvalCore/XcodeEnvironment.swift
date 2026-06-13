@@ -36,23 +36,34 @@ public enum XcodeLocator {
         preferredPath: String? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> [XcodeInstallation] {
-        candidateDeveloperDirectories(
-            preferredPath: preferredPath,
-            environment: environment
+        inspectCandidates(
+            candidateDeveloperDirectories(
+                preferredPath: preferredPath,
+                environment: environment
+            ),
+            inspector: inspect
         )
-        .compactMap(inspect)
-        .sorted { lhs, rhs in
-            if lhs.exportsEvaluations != rhs.exportsEvaluations {
-                return lhs.exportsEvaluations
-            }
-            return lhs.applicationPath < rhs.applicationPath
-        }
+    }
+
+    static func inspectCandidates(
+        _ candidates: [URL],
+        inspector: (URL) -> XcodeInstallation?
+    ) -> [XcodeInstallation] {
+        candidates.compactMap(inspector)
     }
 
     public static func evaluationCapableInstallation(
         preferredPath: String? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws -> XcodeInstallation {
+        if let preferredPath {
+            let developerDirectory = normalizeXcodePath(preferredPath)
+            guard isXcodeDeveloperDirectory(developerDirectory) else {
+                throw XcodeEnvironmentError.invalidPreferredXcodePath(
+                    developerDirectory.path
+                )
+            }
+        }
         let installations = installations(
             preferredPath: preferredPath,
             environment: environment
@@ -105,7 +116,7 @@ public enum XcodeLocator {
                     includingPropertiesForKeys: nil,
                     options: [.skipsHiddenFiles]
                 )) ?? []
-            for application in applications {
+            for application in applications.sorted(by: { $0.path < $1.path }) {
                 guard
                     application.pathExtension == "app",
                     application.lastPathComponent
@@ -156,7 +167,7 @@ public enum XcodeLocator {
 
     private static func inspect(_ developerDirectory: URL) -> XcodeInstallation? {
         let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: developerDirectory.path) else {
+        guard isXcodeDeveloperDirectory(developerDirectory) else {
             return nil
         }
 
@@ -180,6 +191,22 @@ public enum XcodeLocator {
             ),
             exportsEvaluations: export.available,
             exportSchemaVersion: export.schemaVersion
+        )
+    }
+
+    private static func isXcodeDeveloperDirectory(_ url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        guard
+            FileManager.default.fileExists(
+                atPath: url.path,
+                isDirectory: &isDirectory
+            ),
+            isDirectory.boolValue
+        else {
+            return false
+        }
+        return FileManager.default.isExecutableFile(
+            atPath: url.appendingPathComponent("usr/bin/xcodebuild").path
         )
     }
 
@@ -261,8 +288,9 @@ public enum XcodeLocator {
     }
 }
 
-public enum XcodeEnvironmentError: LocalizedError {
+public enum XcodeEnvironmentError: LocalizedError, Equatable {
     case evaluationsXcodeNotFound
+    case invalidPreferredXcodePath(String)
     case preferredXcodeDoesNotSupportEvaluations
 
     public var errorDescription: String? {
@@ -271,6 +299,11 @@ public enum XcodeEnvironmentError: LocalizedError {
             """
             No Xcode installation with Evaluations.framework and \
             'xcresulttool export evaluations' was found.
+            """
+        case .invalidPreferredXcodePath(let path):
+            """
+            The selected path is not an Xcode.app or valid Contents/Developer \
+            directory: \(path)
             """
         case .preferredXcodeDoesNotSupportEvaluations:
             "The selected Xcode does not expose Evaluations export tooling."

@@ -52,6 +52,16 @@ func loadSingleArtifact(
     selection: ArtifactSelectionOptions
 ) throws -> EvaluationArtifact {
     let artifacts = try loadSelectedArtifacts(path: path, selection: selection)
+    return try requireSingleArtifact(artifacts)
+}
+
+func loadSingleArtifact(path: String) throws -> EvaluationArtifact {
+    try requireSingleArtifact(loadArtifacts(path: path))
+}
+
+private func requireSingleArtifact(
+    _ artifacts: [EvaluationArtifact]
+) throws -> EvaluationArtifact {
     guard artifacts.count == 1 else {
         throw ValidationError(
             """

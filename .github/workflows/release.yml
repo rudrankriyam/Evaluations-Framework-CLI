@@ -29,6 +29,11 @@ jobs:
           swift build
           swift test
 
+      - name: Verify version and CLI behavior
+        run: |
+          XCEVAL_EXPECTED_VERSION="${VERSION}" \
+            Tests/Integration/cli-integration.sh .build/debug/xceval
+
       - name: Build universal release binary
         run: |
           rm -rf .build-release release
@@ -96,8 +101,9 @@ jobs:
         env:
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
         run: |
-          export SHA256=$(shasum -a 256 \
+          SHA256=$(shasum -a 256 \
             "release/xceval_${VERSION}_macOS_universal" | cut -d ' ' -f 1)
+          export SHA256
           git clone \
             "https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/rudrankriyam/homebrew-tap.git" \
             homebrew-tap

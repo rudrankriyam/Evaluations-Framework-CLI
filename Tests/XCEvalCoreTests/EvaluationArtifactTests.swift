@@ -1,6 +1,7 @@
 import Foundation
 import Testing
-import XCEvalCore
+
+@testable import XCEvalCore
 
 @Test("Evaluation artifacts expose normalized metadata, metrics, and samples")
 func parsesEvaluationArtifact() throws {
@@ -49,10 +50,37 @@ func comparesEvaluationArtifacts() throws {
     #expect(comparison.relativeDelta == 0.5)
 }
 
+@Test("Metric comparisons preserve groups and repeated summary rows")
+func comparesDuplicateSummaryMetrics() throws {
+    let baseline = try EvaluationArtifact(
+        data: Data(duplicateSummaryBaseline.utf8)
+    )
+    let candidate = try EvaluationArtifact(
+        data: Data(duplicateSummaryCandidate.utf8)
+    )
+
+    let comparisons = baseline.comparisons(with: candidate)
+    #expect(comparisons.count == 3)
+    #expect(comparisons.map(\.group) == ["Quality", "Safety", "Quality"])
+    #expect(comparisons.map(\.occurrence) == [1, 1, 2])
+    #expect(comparisons.map(\.baseline) == [0.5, 0.7, 0.6])
+    #expect(comparisons.map(\.candidate) == [0.8, 0.9, 0.65])
+
+    let encoded = try JSONValue.decode(JSONEncoder().encode(comparisons))
+    #expect(encoded.arrayValue?[2]["occurrence"] == .integer(2))
+}
+
 @Test("Non-evaluation JSON is rejected")
 func rejectsNonEvaluationJSON() {
     #expect(throws: EvaluationArtifactError.self) {
         try EvaluationArtifact(data: Data(#"{"value":1}"#.utf8))
+    }
+}
+
+@Test("Empty top-level JSON arrays are rejected")
+func rejectsEmptyJSONArrays() {
+    #expect(throws: EvaluationArtifactLoaderError.self) {
+        try EvaluationArtifactLoader.load(data: Data("[]".utf8))
     }
 }
 
@@ -186,6 +214,48 @@ func loadsArtifactDirectories() throws {
         ])
 }
 
+@Test("Xcode inspection preserves candidate discovery priority")
+func preservesXcodeDiscoveryPriority() {
+    let preferred = URL(fileURLWithPath: "/tmp/Z-Priority.app/Contents/Developer")
+    let fallback = URL(fileURLWithPath: "/Applications/A-Xcode.app/Contents/Developer")
+    let installations = XcodeLocator.inspectCandidates(
+        [preferred, fallback]
+    ) { candidate in
+        XcodeInstallation(
+            applicationPath: candidate.deletingLastPathComponent()
+                .deletingLastPathComponent().path,
+            developerDirectory: candidate.path,
+            version: nil,
+            build: nil,
+            frameworks: [],
+            exportsEvaluations: false,
+            exportSchemaVersion: nil
+        )
+    }
+
+    #expect(
+        installations.map(\.developerDirectory) == [
+            preferred.path,
+            fallback.path
+        ])
+}
+
+@Test("Invalid explicit Xcode paths have a distinct error")
+func rejectsInvalidPreferredXcodePath() {
+    let missing = FileManager.default.temporaryDirectory
+        .appendingPathComponent("missing-xcode-\(UUID().uuidString).app")
+
+    #expect(
+        throws: XcodeEnvironmentError.invalidPreferredXcodePath(
+            missing.appendingPathComponent("Contents/Developer").path
+        )
+    ) {
+        try XcodeLocator.evaluationCapableInstallation(
+            preferredPath: missing.path
+        )
+    }
+}
+
 private let fixture = #"""
     {
       "evaluationID": "ExampleEvaluation",
@@ -220,5 +290,27 @@ private let fixture = #"""
           }
         }
       ]
+    }
+    """#
+
+private let duplicateSummaryBaseline = #"""
+    {
+      "summary": [
+        {"Mean Score":{"group":"Quality","operation":{"metric":"Score","type":"mean"},"value":0.5}},
+        {"Mean Score":{"group":"Safety","operation":{"metric":"Score","type":"mean"},"value":0.7}},
+        {"Mean Score":{"group":"Quality","operation":{"metric":"Score","type":"mean"},"value":0.6}}
+      ],
+      "results": []
+    }
+    """#
+
+private let duplicateSummaryCandidate = #"""
+    {
+      "summary": [
+        {"Mean Score":{"group":"Quality","operation":{"metric":"Score","type":"mean"},"value":0.8}},
+        {"Mean Score":{"group":"Safety","operation":{"metric":"Score","type":"mean"},"value":0.9}},
+        {"Mean Score":{"group":"Quality","operation":{"metric":"Score","type":"mean"},"value":0.65}}
+      ],
+      "results": []
     }
     """#

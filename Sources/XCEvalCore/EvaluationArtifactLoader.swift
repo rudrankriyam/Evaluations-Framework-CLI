@@ -27,6 +27,24 @@ public enum EvaluationArtifactLoader {
         data: Data,
         sourceURL: URL = URL(fileURLWithPath: "<stdin>")
     ) throws -> [EvaluationArtifact] {
+        if let artifacts = try loadDocument(
+            data: data,
+            sourceURL: sourceURL
+        ) {
+            return artifacts
+        }
+
+        let artifacts = try loadJSONLines(data: data, sourceURL: sourceURL)
+        guard !artifacts.isEmpty else {
+            throw EvaluationArtifactLoaderError.noArtifacts(sourceURL.path)
+        }
+        return artifacts
+    }
+
+    private static func loadDocument(
+        data: Data,
+        sourceURL: URL
+    ) throws -> [EvaluationArtifact]? {
         if let value = try? JSONValue.decode(data) {
             switch value {
             case .object:
@@ -34,6 +52,11 @@ public enum EvaluationArtifactLoader {
                     try EvaluationArtifact(data: data, sourceURL: sourceURL)
                 ]
             case .array(let values):
+                guard !values.isEmpty else {
+                    throw EvaluationArtifactLoaderError.noArtifacts(
+                        sourceURL.path
+                    )
+                }
                 return try values.enumerated().map { index, value in
                     try EvaluationArtifact(
                         data: try value.encodedData(),
@@ -45,7 +68,13 @@ public enum EvaluationArtifactLoader {
                 break
             }
         }
+        return nil
+    }
 
+    private static func loadJSONLines(
+        data: Data,
+        sourceURL: URL
+    ) throws -> [EvaluationArtifact] {
         let lines = data.split(
             separator: 0x0A,
             omittingEmptySubsequences: false
@@ -69,9 +98,6 @@ public enum EvaluationArtifactLoader {
                     message: error.localizedDescription
                 )
             }
-        }
-        guard !artifacts.isEmpty else {
-            throw EvaluationArtifactLoaderError.noArtifacts(sourceURL.path)
         }
         return artifacts
     }

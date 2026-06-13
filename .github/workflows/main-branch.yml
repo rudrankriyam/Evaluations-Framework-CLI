@@ -31,6 +31,9 @@ jobs:
           swift build
           swift test
 
+      - name: Run CLI integration matrix
+        run: Tests/Integration/cli-integration.sh .build/debug/xceval
+
       - name: Build universal release binary
         run: |
           rm -rf .build-release build

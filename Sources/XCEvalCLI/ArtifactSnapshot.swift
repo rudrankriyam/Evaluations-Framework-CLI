@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import XCEvalCore
 
@@ -9,6 +10,7 @@ struct TestExportOutcome {
 struct ArtifactStamp: Equatable {
     let size: UInt64
     let modificationDate: Date?
+    let contentDigest: String
 }
 
 func artifactSnapshot(at url: URL) -> [String: ArtifactStamp] {
@@ -42,8 +44,16 @@ func artifactSnapshot(at url: URL) -> [String: ArtifactStamp] {
                 file.path,
                 ArtifactStamp(
                     size: (attributes[.size] as? NSNumber)?.uint64Value ?? 0,
-                    modificationDate: attributes[.modificationDate] as? Date
+                    modificationDate: attributes[.modificationDate] as? Date,
+                    contentDigest: contentDigest(of: file)
                 )
             )
         })
+}
+
+private func contentDigest(of file: URL) -> String {
+    guard let data = try? Data(contentsOf: file) else { return "" }
+    return SHA256.hash(data: data).map {
+        String(format: "%02x", $0)
+    }.joined()
 }

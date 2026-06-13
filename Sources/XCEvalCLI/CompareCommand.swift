@@ -22,14 +22,8 @@ struct CompareCommand: ParsableCommand {
 
     mutating func run() throws {
         let output = try outputOptions.resolve()
-        let baseline = try loadSingleArtifact(
-            path: baselinePath,
-            selection: ArtifactSelectionOptions()
-        )
-        let candidate = try loadSingleArtifact(
-            path: candidatePath,
-            selection: ArtifactSelectionOptions()
-        )
+        let baseline = try loadSingleArtifact(path: baselinePath)
+        let candidate = try loadSingleArtifact(path: candidatePath)
         let comparisons = baseline.comparisons(with: candidate)
 
         switch output.format {
@@ -62,6 +56,13 @@ struct CompareCommand: ParsableCommand {
         print("Candidate: \(candidatePath)")
         print()
         for comparison in comparisons {
+            var label = comparison.name
+            if let group = comparison.group {
+                label += " [\(group)]"
+            }
+            if comparison.occurrence > 1 {
+                label += " #\(comparison.occurrence)"
+            }
             let baselineValue = comparison.baseline.map(formattedNumber) ?? "missing"
             let candidateValue = comparison.candidate.map(formattedNumber) ?? "missing"
             let delta =
@@ -69,7 +70,7 @@ struct CompareCommand: ParsableCommand {
                     $0 >= 0 ? "+\(formattedNumber($0))" : formattedNumber($0)
                 } ?? "n/a"
             print(
-                "\(comparison.name): \(baselineValue) -> "
+                "\(label): \(baselineValue) -> "
                     + "\(candidateValue) (delta \(delta))"
             )
         }

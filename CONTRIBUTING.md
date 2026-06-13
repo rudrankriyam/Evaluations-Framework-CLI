@@ -15,6 +15,7 @@ Build and test:
 ```bash
 swift build
 swift test
+Tests/Integration/cli-integration.sh .build/debug/xceval
 swift run xceval --help
 ```
 
