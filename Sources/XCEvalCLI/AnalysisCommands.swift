@@ -280,7 +280,10 @@ struct GateCommand: ParsableCommand {
         discussion: """
             xceval never guesses metric direction. Each rule must include its \
             comparison, for example --rule 'Mean of Accuracy>=0.9' or \
-            --rule 'Maximum of Latency<2'.
+            --rule 'Maximum of Latency<2'. Equality rules (== and !=) treat \
+            values as equal when they differ by no more than 1e-9 scaled by \
+            max(1, |actual|, |expected|), so floating-point rounding noise \
+            does not flip a gate.
             """
     )
 

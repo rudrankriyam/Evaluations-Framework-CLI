@@ -228,12 +228,15 @@ private struct EvaluationStarterProject {
             }
 
             guard let developerDirectory else {
-                fatalError(
+                fputs(
                     """
-                    Xcode 27 with Evaluations.framework was not found.
+                    error: Xcode 27 with Evaluations.framework was not found.
                     Set DEVELOPER_DIR to Xcode.app/Contents/Developer.
-                    """
+
+                    """,
+                    stderr
                 )
+                exit(1)
             }
 
             let frameworks = developerDirectory
@@ -368,7 +371,11 @@ private struct EvaluationStarterProject {
                             withExtension: "json"
                         )
                     else {
-                        fatalError("Missing starter-samples.json resource.")
+                        fputs(
+                            "error: Missing starter-samples.json resource.\n",
+                            stderr
+                        )
+                        exit(1)
                     }
                     return url
                 }()
