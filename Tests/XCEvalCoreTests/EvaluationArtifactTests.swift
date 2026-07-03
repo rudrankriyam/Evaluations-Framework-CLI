@@ -249,6 +249,46 @@ func evaluatesGateRules() throws {
     }
 }
 
+@Test("Gate equality rules tolerate floating-point rounding noise")
+func evaluatesGateEqualityWithTolerance() throws {
+    let noisy = fixture.replacingOccurrences(
+        of: #""value":0.5"#,
+        with: #""value":0.8999999999999999"#
+    )
+    let artifact = try EvaluationArtifact(data: Data(noisy.utf8))
+
+    #expect(
+        try EvaluationGateRule("Mean of Accuracy==0.9")
+            .evaluate(in: artifact).passed
+    )
+    #expect(
+        try !EvaluationGateRule("Mean of Accuracy!=0.9")
+            .evaluate(in: artifact).passed
+    )
+    #expect(
+        try !EvaluationGateRule("Mean of Accuracy==0.8")
+            .evaluate(in: artifact).passed
+    )
+    #expect(
+        try EvaluationGateRule("Mean of Accuracy!=0.8")
+            .evaluate(in: artifact).passed
+    )
+}
+
+@Test("Gate equality tolerance is 1e-9 scaled by magnitude")
+func gateEqualityToleranceBoundaries() {
+    #expect(EvaluationGateRule.approximatelyEqual(0.8999999999999999, 0.9))
+    #expect(EvaluationGateRule.approximatelyEqual(0.1 + 0.2, 0.3))
+    #expect(EvaluationGateRule.approximatelyEqual(0, 0))
+    #expect(EvaluationGateRule.approximatelyEqual(0, 1e-10))
+    #expect(
+        EvaluationGateRule.approximatelyEqual(1_000_000, 1_000_000.0000001)
+    )
+    #expect(!EvaluationGateRule.approximatelyEqual(0, 1e-8))
+    #expect(!EvaluationGateRule.approximatelyEqual(0.89, 0.9))
+    #expect(!EvaluationGateRule.approximatelyEqual(0.8, 0.9))
+}
+
 @Test("Artifact directories recursively load result and JSONL files")
 func loadsArtifactDirectories() throws {
     let directory = FileManager.default.temporaryDirectory

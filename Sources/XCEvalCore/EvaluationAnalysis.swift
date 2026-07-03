@@ -530,10 +530,26 @@ public struct EvaluationGateRule: Codable, Equatable, Sendable {
         case notEqual = "!="
     }
 
+    /// Tolerance applied to `==` and `!=` rules so floating-point rounding
+    /// noise does not flip a gate. Two values are treated as equal when they
+    /// differ by no more than `equalityTolerance` scaled by
+    /// `max(1, |actual|, |expected|)`.
+    public static let equalityTolerance = 1e-9
+
     public let expression: String
     public let metric: String
     public let comparison: Comparison
     public let expected: Double
+
+    /// Returns true when the two values are equal within
+    /// ``equalityTolerance`` scaled by `max(1, |lhs|, |rhs|)`.
+    public static func approximatelyEqual(
+        _ lhs: Double,
+        _ rhs: Double
+    ) -> Bool {
+        lhs == rhs
+            || abs(lhs - rhs) <= equalityTolerance * max(1, abs(lhs), abs(rhs))
+    }
 
     public init(_ expression: String) throws {
         let pattern = #"^\s*(.+?)\s*(>=|<=|==|!=|>|<)\s*(-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*$"#
@@ -589,9 +605,9 @@ public struct EvaluationGateRule: Codable, Equatable, Sendable {
         case .lessThanOrEqual:
             passed = actual <= expected
         case .equal:
-            passed = actual == expected
+            passed = Self.approximatelyEqual(actual, expected)
         case .notEqual:
-            passed = actual != expected
+            passed = !Self.approximatelyEqual(actual, expected)
         }
         return EvaluationGateResult(
             expression: expression,
