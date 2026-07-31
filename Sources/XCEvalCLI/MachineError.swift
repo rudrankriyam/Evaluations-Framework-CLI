@@ -163,6 +163,12 @@ private func classifyMachineError(
                 true,
                 ["operationID": .string(operationID)]
             )
+        case .executionOutcomeAmbiguous(let operationID):
+            return (
+                "operation_outcome_ambiguous",
+                false,
+                ["operationID": .string(operationID)]
+            )
         case .idempotencyKeyMismatch,
             .receiptIdentityMismatch,
             .terminalReceiptImmutable:

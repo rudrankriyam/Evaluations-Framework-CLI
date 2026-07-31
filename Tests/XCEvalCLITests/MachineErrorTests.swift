@@ -66,6 +66,24 @@ func missingOperationReceiptIsNotFound() {
     #expect(document.error.details["operationID"] == .string("missing-run"))
 }
 
+@Test("An uncommitted producer outcome is non-retryable")
+func ambiguousOperationOutcomeIsNotRetryable() {
+    let document = machineErrorDocument(
+        error:
+            OperationReceiptStoreError.executionOutcomeAmbiguous(
+                "completed-run"
+            ),
+        arguments: ["run"]
+    )
+
+    #expect(document.command == "run")
+    #expect(document.error.code == "operation_outcome_ambiguous")
+    #expect(!document.error.retryable)
+    #expect(
+        document.error.details["operationID"] == .string("completed-run")
+    )
+}
+
 @Test("Operation receipt I/O failures are retryable state failures")
 func operationReceiptIOFailureIsRetryable() {
     let document = machineErrorDocument(

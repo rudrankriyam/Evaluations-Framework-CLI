@@ -130,6 +130,16 @@ struct RunCommand: AsyncParsableCommand {
             try failOperation(runningReceipt, message: error.localizedDescription)
             throw error
         }
+        do {
+            try operationLease?.markExecutionFinished()
+        } catch {
+            try failOperation(
+                runningReceipt,
+                process: process,
+                message: error.localizedDescription
+            )
+            throw error
+        }
 
         let artifacts: [EvaluationArtifact]
         do {

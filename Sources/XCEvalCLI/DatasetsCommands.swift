@@ -219,6 +219,19 @@ struct DatasetsSelectCommand: ParsableCommand {
                             ?? JSONValue.string(display).canonicalJSONString
                     )
                 } ?? []
+            let duplicateKeys = Dictionary(
+                grouping: requested,
+                by: \.canonical
+            ).values.compactMap { requests in
+                requests.count > 1 ? requests[0].display : nil
+            }.sorted()
+            guard duplicateKeys.isEmpty else {
+                throw ValidationError(
+                    "Selection keys must be unique; duplicates: "
+                        + duplicateKeys.joined(separator: ", ")
+                        + "."
+                )
+            }
             let keyed = Dictionary(grouping: loaded.records) { record in
                 record.value(atJSONPointer: sampleKey)?.canonicalJSONString
             }

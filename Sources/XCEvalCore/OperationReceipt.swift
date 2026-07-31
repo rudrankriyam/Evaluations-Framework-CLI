@@ -226,6 +226,7 @@ public enum OperationReceiptClaim: Sendable {
 public final class OperationReceiptLease: @unchecked Sendable {
     private let lock = NSLock()
     private var descriptor: Int32?
+    private var marker: OperationExecutionMarker?
 
     fileprivate init(descriptor: Int32) {
         self.descriptor = descriptor
@@ -233,6 +234,21 @@ public final class OperationReceiptLease: @unchecked Sendable {
 
     deinit {
         release()
+    }
+
+    /// Records that the claimed producer returned before its terminal receipt
+    /// is persisted.
+    ///
+    /// A later claimant treats this durable marker as an ambiguous completed
+    /// outcome instead of executing the producer a second time.
+    public func markExecutionFinished() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let descriptor, let marker else {
+            throw OperationReceiptStoreError.invalidLifecycleEvidence
+        }
+        try writeExecutionMarkerState(.finished, to: descriptor)
+        self.marker = marker.withState(.finished)
     }
 
     public func release() {
@@ -243,6 +259,21 @@ public final class OperationReceiptLease: @unchecked Sendable {
         guard let descriptor else { return }
         _ = flock(descriptor, LOCK_UN)
         _ = close(descriptor)
+    }
+
+    fileprivate func beginExecution(_ receipt: OperationReceipt) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let descriptor else {
+            throw OperationReceiptStoreError.invalidLifecycleEvidence
+        }
+        let marker = OperationExecutionMarker(
+            state: .running,
+            operationID: receipt.operationID,
+            attempt: receipt.attempt
+        )
+        try writeExecutionMarker(marker, to: descriptor)
+        self.marker = marker
     }
 }
 
@@ -302,7 +333,7 @@ public struct OperationReceiptStore: Sendable {
 
         do {
             if FileManager.default.fileExists(atPath: url.path) {
-                let existing = try load(
+                let existing = try loadPersisted(
                     idempotencyKey: receipt.idempotencyKey
                 )
                 guard
@@ -313,6 +344,10 @@ public struct OperationReceiptStore: Sendable {
                     lease.release()
                     return .existing(existing)
                 }
+                try rejectAmbiguousExecution(
+                    for: existing,
+                    marker: readExecutionMarker(from: descriptor)
+                )
                 let recovered = OperationReceipt(
                     operationID: existing.operationID,
                     idempotencyKey: existing.idempotencyKey,
@@ -324,9 +359,11 @@ public struct OperationReceiptStore: Sendable {
                     startedAt: receipt.startedAt,
                     inputDigest: existing.inputDigest
                 )
+                try lease.beginExecution(recovered)
                 try atomicWrite(encoded(recovered), to: url)
                 return .claimed(recovered, lease)
             }
+            try lease.beginExecution(receipt)
             try atomicWrite(encoded(receipt), to: url)
             return .claimed(receipt, lease)
         } catch {
@@ -344,7 +381,9 @@ public struct OperationReceiptStore: Sendable {
                 receipt.idempotencyKey
             )
         }
-        let existing = try load(idempotencyKey: receipt.idempotencyKey)
+        let existing = try loadPersisted(
+            idempotencyKey: receipt.idempotencyKey
+        )
         guard
             existing.operationID == receipt.operationID,
             existing.operation == receipt.operation,
@@ -359,6 +398,16 @@ public struct OperationReceiptStore: Sendable {
     }
 
     public func load(idempotencyKey: String) throws -> OperationReceipt {
+        let receipt = try loadPersisted(idempotencyKey: idempotencyKey)
+        if receipt.state == .running {
+            try rejectAmbiguousExecutionIfLeaseIsAbandoned(for: receipt)
+        }
+        return receipt
+    }
+
+    private func loadPersisted(
+        idempotencyKey: String
+    ) throws -> OperationReceipt {
         let url = receiptURL(for: idempotencyKey)
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw OperationReceiptStoreError.receiptNotFound(idempotencyKey)
@@ -374,6 +423,57 @@ public struct OperationReceiptStore: Sendable {
             throw OperationReceiptStoreError.idempotencyKeyMismatch
         }
         return receipt
+    }
+
+    private func rejectAmbiguousExecutionIfLeaseIsAbandoned(
+        for receipt: OperationReceipt
+    ) throws {
+        let url = claimURL(for: receipt.idempotencyKey)
+        let descriptor = Darwin.open(url.path, O_RDWR | O_CLOEXEC)
+        if descriptor == -1, errno == ENOENT {
+            return
+        }
+        guard descriptor != -1 else {
+            throw OperationReceiptStoreError.systemCall(
+                operation: "open claim",
+                code: errno
+            )
+        }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            let code = errno
+            _ = close(descriptor)
+            if code == EWOULDBLOCK {
+                return
+            }
+            throw OperationReceiptStoreError.systemCall(
+                operation: "lock claim",
+                code: code
+            )
+        }
+        defer {
+            _ = flock(descriptor, LOCK_UN)
+            _ = close(descriptor)
+        }
+        try rejectAmbiguousExecution(
+            for: receipt,
+            marker: readExecutionMarker(from: descriptor)
+        )
+    }
+
+    private func rejectAmbiguousExecution(
+        for receipt: OperationReceipt,
+        marker: OperationExecutionMarkerRead
+    ) throws {
+        switch marker {
+        case .none:
+            return
+        case .valid(let marker) where marker.state == .running:
+            return
+        case .valid, .malformed:
+            throw OperationReceiptStoreError.executionOutcomeAmbiguous(
+                receipt.idempotencyKey
+            )
+        }
     }
 
     private func validate(_ receipt: OperationReceipt) throws {
@@ -537,6 +637,7 @@ public enum OperationReceiptStoreError: LocalizedError, Equatable {
     case invalidLifecycleEvidence
     case receiptNotFound(String)
     case claimPending(String)
+    case executionOutcomeAmbiguous(String)
     case idempotencyKeyMismatch
     case receiptIdentityMismatch
     case terminalReceiptImmutable
@@ -558,6 +659,9 @@ public enum OperationReceiptStoreError: LocalizedError, Equatable {
             "No operation receipt exists for idempotency key '\(key)'."
         case .claimPending(let key):
             "The operation claim for idempotency key '\(key)' has no receipt yet."
+        case .executionOutcomeAmbiguous(let key):
+            "The producer for idempotency key '\(key)' finished, but its terminal "
+                + "receipt was not committed. Refusing to execute it again."
         case .idempotencyKeyMismatch:
             "The receipt contents do not match the requested idempotency key."
         case .receiptIdentityMismatch:
@@ -570,10 +674,169 @@ public enum OperationReceiptStoreError: LocalizedError, Equatable {
     }
 }
 
+private enum OperationExecutionMarkerState: String {
+    case running = "running_"
+    case finished = "finished"
+}
+
+private struct OperationExecutionMarker {
+    static let schemaVersion = "xceval.operation-execution/v1"
+
+    let state: OperationExecutionMarkerState
+    let operationID: UUID
+    let attempt: Int
+
+    func withState(
+        _ state: OperationExecutionMarkerState
+    ) -> OperationExecutionMarker {
+        OperationExecutionMarker(
+            state: state,
+            operationID: operationID,
+            attempt: attempt
+        )
+    }
+}
+
+private enum OperationExecutionMarkerRead {
+    case none
+    case valid(OperationExecutionMarker)
+    case malformed
+}
+
 private func idempotencyKeyDigest(_ value: String) -> String {
     SHA256.hash(data: Data(value.utf8)).map {
         String(format: "%02x", $0)
     }.joined()
+}
+
+private func writeExecutionMarker(
+    _ marker: OperationExecutionMarker,
+    to descriptor: Int32
+) throws {
+    let data = Data(
+        """
+        \(marker.state.rawValue)
+        \(OperationExecutionMarker.schemaVersion)
+        \(marker.operationID.uuidString)
+        \(marker.attempt)
+
+        """.utf8
+    )
+    guard lseek(descriptor, 0, SEEK_SET) != -1 else {
+        throw OperationReceiptStoreError.systemCall(
+            operation: "seek execution marker",
+            code: errno
+        )
+    }
+    try writeAll(data, to: descriptor)
+    guard ftruncate(descriptor, off_t(data.count)) == 0 else {
+        throw OperationReceiptStoreError.systemCall(
+            operation: "truncate execution marker",
+            code: errno
+        )
+    }
+    guard fsync(descriptor) == 0 else {
+        throw OperationReceiptStoreError.systemCall(
+            operation: "fsync execution marker",
+            code: errno
+        )
+    }
+}
+
+private func writeExecutionMarkerState(
+    _ state: OperationExecutionMarkerState,
+    to descriptor: Int32
+) throws {
+    let data = Data(state.rawValue.utf8)
+    try data.withUnsafeBytes { buffer in
+        guard let baseAddress = buffer.baseAddress else { return }
+        var offset = 0
+        while offset < buffer.count {
+            let count = pwrite(
+                descriptor,
+                baseAddress.advanced(by: offset),
+                buffer.count - offset,
+                off_t(offset)
+            )
+            if count == -1 {
+                if errno == EINTR {
+                    continue
+                }
+                throw OperationReceiptStoreError.systemCall(
+                    operation: "write execution marker",
+                    code: errno
+                )
+            }
+            offset += count
+        }
+    }
+    guard fsync(descriptor) == 0 else {
+        throw OperationReceiptStoreError.systemCall(
+            operation: "fsync execution marker",
+            code: errno
+        )
+    }
+}
+
+private func readExecutionMarker(
+    from descriptor: Int32
+) throws -> OperationExecutionMarkerRead {
+    guard lseek(descriptor, 0, SEEK_SET) != -1 else {
+        throw OperationReceiptStoreError.systemCall(
+            operation: "seek execution marker",
+            code: errno
+        )
+    }
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 512)
+    while true {
+        let count = Darwin.read(descriptor, &buffer, buffer.count)
+        if count == 0 {
+            break
+        }
+        if count == -1 {
+            if errno == EINTR {
+                continue
+            }
+            throw OperationReceiptStoreError.systemCall(
+                operation: "read execution marker",
+                code: errno
+            )
+        }
+        data.append(buffer, count: count)
+        if data.count > 4_096 {
+            return .malformed
+        }
+    }
+    guard !data.isEmpty else {
+        return .none
+    }
+    guard
+        let value = String(data: data, encoding: .utf8),
+        value.hasSuffix("\n"),
+        value.split(separator: "\n").count == 4
+    else {
+        return .malformed
+    }
+    let fields = value.split(separator: "\n")
+    guard
+        let state = OperationExecutionMarkerState(
+            rawValue: String(fields[0])
+        ),
+        fields[1] == OperationExecutionMarker.schemaVersion[...],
+        let operationID = UUID(uuidString: String(fields[2])),
+        let attempt = Int(fields[3]),
+        attempt > 0
+    else {
+        return .malformed
+    }
+    return .valid(
+        OperationExecutionMarker(
+            state: state,
+            operationID: operationID,
+            attempt: attempt
+        )
+    )
 }
 
 private func writeAll(_ data: Data, to descriptor: Int32) throws {

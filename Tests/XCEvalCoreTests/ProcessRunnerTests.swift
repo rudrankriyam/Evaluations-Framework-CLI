@@ -240,6 +240,46 @@ func operationReceiptRecoversAbandonedAttempt() throws {
     #expect(recovered.outputs.isEmpty)
 }
 
+@Test("A finished producer with an uncommitted receipt is never rerun")
+func operationReceiptRefusesAmbiguousCompletedExecution() throws {
+    let directory = temporaryTestDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = OperationReceiptStore(directory: directory)
+    let first = OperationReceipt(
+        idempotencyKey: "completed-before-save",
+        operation: "evaluation.run",
+        inputDigest: "sha256:request"
+    )
+    guard case .claimed(_, let lease) = try store.claim(first) else {
+        Issue.record("Expected the first receipt claim to succeed.")
+        return
+    }
+    try lease.markExecutionFinished()
+    lease.release()
+
+    let retry = OperationReceipt(
+        idempotencyKey: first.idempotencyKey,
+        operation: first.operation,
+        inputDigest: first.inputDigest
+    )
+    #expect(
+        throws:
+            OperationReceiptStoreError.executionOutcomeAmbiguous(
+                first.idempotencyKey
+            )
+    ) {
+        try store.claim(retry)
+    }
+    #expect(
+        throws:
+            OperationReceiptStoreError.executionOutcomeAmbiguous(
+                first.idempotencyKey
+            )
+    ) {
+        try store.load(idempotencyKey: first.idempotencyKey)
+    }
+}
+
 @Test("Operation receipts update atomically and terminal states are immutable")
 func operationReceiptsBecomeImmutableAtTerminalState() throws {
     let directory = temporaryTestDirectory()
@@ -271,6 +311,7 @@ func operationReceiptsBecomeImmutableAtTerminalState() throws {
         endedAt: Date(timeIntervalSince1970: 1_700_000_001)
     )
 
+    try lease.markExecutionFinished()
     try store.save(completed)
     let persisted = try store.load(idempotencyKey: receipt.idempotencyKey)
     #expect(persisted.state == .succeeded)

@@ -232,6 +232,18 @@ write_json(
         ],
     },
 )
+write_json(
+    "dataset-duplicate.selection.json",
+    {
+        "schemaVersion": "xceval.selection/v1",
+        "sampleKey": "/id",
+        "count": 2,
+        "samples": [
+            {"key": "case-alpha", "index": 0},
+            {"key": "case-alpha", "index": 0},
+        ],
+    },
+)
 
 golden = [
     {
@@ -359,6 +371,7 @@ STATE="$WORK/operation-state"
 SELECTION="$WORK/failures.selection.json"
 SEED_SELECTION="$WORK/seed.selection.json"
 DATASET_SELECTION="$WORK/dataset.selection.json"
+DUPLICATE_DATASET_SELECTION="$WORK/dataset-duplicate.selection.json"
 GOLDEN="$WORK/golden.dataset.json"
 INVALID_DATASET="$WORK/invalid.dataset.json"
 
@@ -577,6 +590,45 @@ test_operation_receipts_and_timeouts() {
         'd["schemaVersion"] == "xceval.error/v1" and d["command"] == "run" and d["error"]["code"] == "operation_conflict" and d["error"]["retryable"] is False and d["error"]["details"]["operationID"] == "operation-success"' \
         "operation conflict emits its documented machine contract"
 
+    python3 - "$STATE" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import sys
+
+state = pathlib.Path(sys.argv[1])
+digest = hashlib.sha256(b"operation-success").hexdigest()
+receipt = state / f"{digest}.json"
+temporary = state / f".{digest}.ambiguous.tmp"
+document = json.loads(receipt.read_text(encoding="utf-8"))
+document["state"] = "running"
+document["outputs"] = []
+for key in ("endedAt", "process", "errorMessage"):
+    document.pop(key, None)
+temporary.write_text(
+    json.dumps(document, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+os.replace(temporary, receipt)
+PY
+    capture "$BIN" run fixture.evaluate \
+        --targets "$TARGETS" \
+        --operation-id operation-success \
+        --state-directory "$STATE" \
+        --timeout 10 \
+        --selection "$SEED_SELECTION" \
+        --output json
+    require_failure "refuse ambiguous completed operation"
+    assert_json "$LAST_STDOUT" \
+        'd["schemaVersion"] == "xceval.error/v1" and d["command"] == "run" and d["error"]["code"] == "operation_outcome_ambiguous" and d["error"]["retryable"] is False and d["error"]["details"]["operationID"] == "operation-success"' \
+        "uncommitted completed outcome is a non-retryable ambiguity"
+    if [[ $(wc -l <"$WORK/target-marker") -ne 1 ]]; then
+        echo "Ambiguous completed operation re-executed its target." >&2
+        return 1
+    fi
+    mark "ambiguous completed operation never re-executes target"
+
     capture "$BIN" operation operation-missing \
         --state-directory "$STATE" \
         --output json
@@ -788,6 +840,22 @@ test_datasets() {
     assert_json "$LAST_STDOUT" \
         'd["schemaVersion"] == "xceval.datasets/v1" and d["command"] == "datasets.select" and d["selectedCount"] == 1 and d["missingKeys"] == ["case-missing"]' \
         "dataset selection reports absent requested keys"
+
+    local duplicate_selected="$WORK/dataset-duplicate-selected.json"
+    capture "$BIN" datasets select "$GOLDEN" \
+        --selection "$DUPLICATE_DATASET_SELECTION" \
+        --sample-key /id \
+        --output-path "$duplicate_selected" \
+        --output json
+    require_failure "reject duplicate legacy dataset selection keys"
+    assert_json "$LAST_STDOUT" \
+        'd["schemaVersion"] == "xceval.error/v1" and d["command"] == "datasets" and d["error"]["code"] == "invalid_arguments" and d["error"]["retryable"] is False' \
+        "duplicate legacy dataset selection keys are structured failures"
+    if [[ -e "$duplicate_selected" ]]; then
+        echo "Duplicate dataset selection keys wrote output." >&2
+        return 1
+    fi
+    mark "duplicate legacy dataset selection keys fail before writing"
 
     capture "$BIN" datasets draft "$BASE" \
         --only-failures \

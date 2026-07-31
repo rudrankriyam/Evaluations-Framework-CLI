@@ -249,6 +249,14 @@ func recoveredRunUsesAttemptSpecificLogs() async throws {
         ),
         options: .atomic
     )
+    let claimDigest = ContentDigest(
+        data: Data(operationID.utf8)
+    ).rawValue
+    try FileManager.default.removeItem(
+        at: root.appendingPathComponent(
+            "operations/\(claimDigest).claim"
+        )
+    )
 
     var recovered = try configuredRun(
         root: root,
