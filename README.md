@@ -463,7 +463,8 @@ authoring assistance, orchestration, and generic evidence:
    new or changed `.xcevalresult` files. A live executor retains an exclusive
    lease, so concurrent callers do not duplicate the producer. Every recovered
    attempt writes distinct immutable stdout and stderr logs, preserving the
-   abandoned attempt's evidence.
+   abandoned attempt's evidence. Idempotent JSON replays preserve the normal
+   `xceval/v1` run envelope and mark `replayed: true`.
 3. `xceval test` launches `xcodebuild`, preserves its `.xcresult`, and exports
    evaluation attachments even when tests fail.
 4. `xceval` validates, inspects, selects, profiles, compares, converts, and

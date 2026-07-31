@@ -35,6 +35,8 @@ coding agents while keeping evaluation meaning in project-owned Swift.
 - Add safe process timeouts, cancellation, TERM-to-KILL escalation, and
   crash-durable operation state that recovers abandoned attempts without
   duplicating a live executor or replacing the prior attempt's process logs.
+- Preserve one `xceval/v1` response shape for fresh and idempotently replayed
+  runs, with receipt-backed artifact metadata and an explicit replay marker.
 - Reject broad or protected destructive paths before producer execution.
 - Preserve structural sample failures alongside metric failures.
 - Add a disposable Tuist project that compiles directly against Xcode 27 Beta

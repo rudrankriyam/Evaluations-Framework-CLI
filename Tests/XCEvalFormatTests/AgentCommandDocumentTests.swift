@@ -220,7 +220,8 @@ func decodesExpandedRunDocument() throws {
               "process":\(agentProcess),
               "artifacts":[],
               "operationReceipt":\(operationReceipt),
-              "errorMessage":"The producer timed out."
+              "errorMessage":"The producer timed out.",
+              "replayed":true
             }
             """
         )
@@ -235,6 +236,7 @@ func decodesExpandedRunDocument() throws {
     #expect(run.process.standardOutputTruncated == false)
     #expect(run.operationReceipt?.state == .timedOut)
     #expect(run.errorMessage == "The producer timed out.")
+    #expect(run.replayed == true)
 }
 
 private func agentJSON(_ value: String) -> Data {

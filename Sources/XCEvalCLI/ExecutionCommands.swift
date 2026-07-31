@@ -95,7 +95,11 @@ struct RunCommand: AsyncParsableCommand {
             output: output
         )
         if case .existing(let receipt) = operation {
-            try emitReplay(receipt, output: output)
+            try emitReplay(
+                receipt,
+                invocation: invocation,
+                output: output
+            )
             if receipt.state != .succeeded {
                 throw ExitCode.failure
             }
@@ -469,7 +473,15 @@ struct RunCommand: AsyncParsableCommand {
         let outputs = artifacts.map {
             OperationOutputArtifact(
                 path: $0.sourceDescription,
-                contentDigest: ContentDigest(data: $0.rawData).description
+                contentDigest: ContentDigest(data: $0.rawData).description,
+                artifactID: $0.artifactID,
+                byteDigest: $0.byteDigest,
+                evaluationID: $0.evaluationID,
+                resultID: $0.resultID,
+                sampleCount: $0.samples.count,
+                summaryMetricCount: $0.summaries.count,
+                startTime: $0.startTime,
+                durationInMilliseconds: $0.durationInMilliseconds
             )
         }
         let completed: OperationReceipt
@@ -556,6 +568,7 @@ struct RunCommand: AsyncParsableCommand {
 
     private func emitReplay(
         _ receipt: OperationReceipt,
+        invocation: ResolvedRunInvocation,
         output: ResolvedOutputOptions
     ) throws {
         switch output.format {
@@ -568,7 +581,34 @@ struct RunCommand: AsyncParsableCommand {
                 FileHandle.standardError.write(Data("\(errorMessage)\n".utf8))
             }
         case .json:
-            try CLIOutput.emit(receipt, options: output)
+            guard let process = receipt.process else {
+                throw XCEvalCLIError.operationEvidenceUnavailable(
+                    operationID: receipt.idempotencyKey,
+                    component: "the recorded process outcome"
+                )
+            }
+            let artifacts = try receipt.outputs.map {
+                guard let artifact = ArtifactListItem(replaying: $0) else {
+                    throw XCEvalCLIError.operationEvidenceUnavailable(
+                        operationID: receipt.idempotencyKey,
+                        component:
+                            "the recorded artifact metadata for '\($0.path)'"
+                    )
+                }
+                return artifact
+            }
+            try CLIOutput.emit(
+                RunPayload(
+                    producerCommand: invocation.command,
+                    workingDirectory: invocation.workingDirectory?.path,
+                    resultsPath: invocation.resultsURL.path,
+                    process: process,
+                    artifacts: artifacts,
+                    operationReceipt: receipt,
+                    errorMessage: receipt.errorMessage
+                ),
+                options: output
+            )
         case .jsonl, .rawJSON:
             preconditionFailure("Validated output format is exhaustive.")
         }

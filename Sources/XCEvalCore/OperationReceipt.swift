@@ -50,10 +50,37 @@ public struct OperationProcessOutcome: Codable, Equatable, Sendable {
 public struct OperationOutputArtifact: Codable, Equatable, Sendable {
     public let path: String
     public let contentDigest: String?
+    public let artifactID: String?
+    public let byteDigest: String?
+    public let evaluationID: String?
+    public let resultID: String?
+    public let sampleCount: Int?
+    public let summaryMetricCount: Int?
+    public let startTime: String?
+    public let durationInMilliseconds: Double?
 
-    public init(path: String, contentDigest: String? = nil) {
+    public init(
+        path: String,
+        contentDigest: String? = nil,
+        artifactID: String? = nil,
+        byteDigest: String? = nil,
+        evaluationID: String? = nil,
+        resultID: String? = nil,
+        sampleCount: Int? = nil,
+        summaryMetricCount: Int? = nil,
+        startTime: String? = nil,
+        durationInMilliseconds: Double? = nil
+    ) {
         self.path = path
         self.contentDigest = contentDigest
+        self.artifactID = artifactID
+        self.byteDigest = byteDigest
+        self.evaluationID = evaluationID
+        self.resultID = resultID
+        self.sampleCount = sampleCount
+        self.summaryMetricCount = summaryMetricCount
+        self.startTime = startTime
+        self.durationInMilliseconds = durationInMilliseconds
     }
 }
 

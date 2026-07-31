@@ -40,6 +40,26 @@ struct ArtifactListItem: Encodable {
         startTime = artifact.startTime
         durationInMilliseconds = artifact.durationInMilliseconds
     }
+
+    init?(replaying output: OperationOutputArtifact) {
+        guard
+            let artifactID = output.artifactID,
+            let byteDigest = output.byteDigest ?? output.contentDigest,
+            let sampleCount = output.sampleCount,
+            let summaryMetricCount = output.summaryMetricCount
+        else {
+            return nil
+        }
+        path = output.path
+        self.artifactID = artifactID
+        self.byteDigest = byteDigest
+        evaluationID = output.evaluationID
+        resultID = output.resultID
+        self.sampleCount = sampleCount
+        self.summaryMetricCount = summaryMetricCount
+        startTime = output.startTime
+        durationInMilliseconds = output.durationInMilliseconds
+    }
 }
 
 struct ListPayload: Encodable {
@@ -284,6 +304,21 @@ struct ProcessPayload: Encodable {
             result.standardErrorLog.captureTruncated
             || result.standardErrorLog.fileTruncated
     }
+
+    init(replaying outcome: OperationProcessOutcome) {
+        status = outcome.status
+        terminationReason = outcome.terminationReason
+        terminationSignal = outcome.terminationSignal
+        duration = outcome.duration
+        processIdentifier = outcome.processIdentifier
+        processGroupIdentifier = outcome.processGroupIdentifier
+        standardOutput = replayedProcessLog(at: outcome.standardOutputLog)
+        standardError = replayedProcessLog(at: outcome.standardErrorLog)
+        standardOutputLog = outcome.standardOutputLog
+        standardErrorLog = outcome.standardErrorLog
+        standardOutputTruncated = outcome.standardOutputTruncated
+        standardErrorTruncated = outcome.standardErrorTruncated
+    }
 }
 
 struct RunPayload: Encodable {
@@ -296,6 +331,7 @@ struct RunPayload: Encodable {
     let artifacts: [ArtifactListItem]
     let operationReceipt: OperationReceipt?
     let errorMessage: String?
+    let replayed: Bool
 
     init(
         producerCommand: [String],
@@ -313,7 +349,46 @@ struct RunPayload: Encodable {
         self.artifacts = artifacts.map(ArtifactListItem.init)
         self.operationReceipt = operationReceipt
         self.errorMessage = errorMessage
+        replayed = false
     }
+
+    init(
+        producerCommand: [String],
+        workingDirectory: String?,
+        resultsPath: String,
+        process: OperationProcessOutcome,
+        artifacts: [ArtifactListItem],
+        operationReceipt: OperationReceipt,
+        errorMessage: String?
+    ) {
+        self.producerCommand = producerCommand
+        self.workingDirectory = workingDirectory
+        self.resultsPath = resultsPath
+        self.process = ProcessPayload(replaying: process)
+        self.artifacts = artifacts
+        self.operationReceipt = operationReceipt
+        self.errorMessage = errorMessage
+        replayed = true
+    }
+}
+
+private func replayedProcessLog(at path: String?) -> String {
+    guard let path else { return "" }
+    let url = URL(fileURLWithPath: path)
+    guard let handle = try? FileHandle(forReadingFrom: url) else {
+        return ""
+    }
+    defer { try? handle.close() }
+    let maximumBytes: UInt64 = 1_048_576
+    guard
+        let end = try? handle.seekToEnd(),
+        (try? handle.seek(toOffset: end > maximumBytes ? end - maximumBytes : 0))
+            != nil,
+        let data = try? handle.readToEnd()
+    else {
+        return ""
+    }
+    return String(data: data, encoding: .utf8) ?? ""
 }
 
 struct TestPayload: Encodable {

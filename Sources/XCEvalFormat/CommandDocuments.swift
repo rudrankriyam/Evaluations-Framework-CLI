@@ -369,6 +369,7 @@ public struct XCEvalRunDocument: Codable, Equatable, Sendable {
     public let artifacts: [XCEvalArtifactListItem]
     public let operationReceipt: XCEvalOperationReceipt?
     public let errorMessage: String?
+    public let replayed: Bool?
 }
 
 /// Normalized JSON emitted by `xceval test --output json`.

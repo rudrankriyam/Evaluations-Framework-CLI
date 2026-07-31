@@ -19,6 +19,10 @@ struct XCEvalMachineErrorBody: Encodable {
 enum XCEvalCLIError: LocalizedError {
     case manifestNotFound(path: String)
     case operationConflict(operationID: String)
+    case operationEvidenceUnavailable(
+        operationID: String,
+        component: String
+    )
 
     var errorDescription: String? {
         switch self {
@@ -27,6 +31,9 @@ enum XCEvalCLIError: LocalizedError {
         case .operationConflict(let operationID):
             "Operation ID '\(operationID)' is already bound to a different "
                 + "run request."
+        case .operationEvidenceUnavailable(let operationID, let component):
+            "Operation '\(operationID)' cannot reconstruct its run response "
+                + "because \(component) is unavailable."
         }
     }
 }
@@ -80,6 +87,15 @@ private func classifyMachineError(
                 "operation_conflict",
                 false,
                 ["operationID": .string(operationID)]
+            )
+        case .operationEvidenceUnavailable(let operationID, let component):
+            return (
+                "operation_evidence_unavailable",
+                false,
+                [
+                    "operationID": .string(operationID),
+                    "component": .string(component)
+                ]
             )
         }
     }

@@ -49,6 +49,14 @@ public struct XCEvalOperationOutputArtifact:
 {
     public let path: String
     public let contentDigest: String?
+    public let artifactID: String?
+    public let byteDigest: String?
+    public let evaluationID: String?
+    public let resultID: String?
+    public let sampleCount: Int?
+    public let summaryMetricCount: Int?
+    public let startTime: String?
+    public let durationInMilliseconds: Double?
 }
 
 /// The durable receipt emitted by `xceval operation --output json` and nested

@@ -486,7 +486,7 @@ test_operation_receipts_and_timeouts() {
     require_success "run declared target"
     cp "$LAST_STDOUT" "$first"
     assert_json "$first" \
-        'd["schemaVersion"] == "xceval/v1" and d["command"] == "run" and d["process"]["status"] == 0 and d["operationReceipt"]["schemaVersion"] == "xceval.operation-receipt/v1" and d["operationReceipt"]["idempotencyKey"] == "operation-success" and d["operationReceipt"]["operation"] == "run" and d["operationReceipt"]["state"] == "succeeded"' \
+        'd["schemaVersion"] == "xceval/v1" and d["command"] == "run" and d["replayed"] is False and d["process"]["status"] == 0 and d["operationReceipt"]["schemaVersion"] == "xceval.operation-receipt/v1" and d["operationReceipt"]["idempotencyKey"] == "operation-success" and d["operationReceipt"]["operation"] == "run" and d["operationReceipt"]["state"] == "succeeded"' \
         "run emits a durable operation receipt"
     assert_json "$first" \
         'd["operationReceipt"]["inputDigest"].startswith("sha256:") and d["operationReceipt"]["outputs"][0]["path"].endswith("result.xcevalresult") and d["operationReceipt"]["outputs"][0]["contentDigest"].startswith("sha256:")' \
@@ -501,6 +501,7 @@ test_operation_receipts_and_timeouts() {
         'a["operationReceipt"]["operationID"] == b["operationID"] and a["operationReceipt"]["inputDigest"] == b["inputDigest"] and a["operationReceipt"]["outputs"] == b["outputs"]' \
         "operation retrieves the durable receipt"
 
+    rm -f "$WORK/target-results/result.xcevalresult"
     capture "$BIN" run fixture.evaluate \
         --targets "$TARGETS" \
         --operation-id operation-success \
@@ -511,8 +512,8 @@ test_operation_receipts_and_timeouts() {
     require_success "idempotent operation replay"
     cp "$LAST_STDOUT" "$replay"
     assert_same_json_value "$first" "$replay" \
-        'a["operationReceipt"]["operationID"] == b["operationID"] and a["operationReceipt"]["inputDigest"] == b["inputDigest"] and a["operationReceipt"]["outputs"] == b["outputs"]' \
-        "same operation request replays its receipt"
+        'b["schemaVersion"] == "xceval/v1" and b["command"] == "run" and b["replayed"] is True and a["operationReceipt"]["operationID"] == b["operationReceipt"]["operationID"] and a["operationReceipt"]["inputDigest"] == b["operationReceipt"]["inputDigest"] and a["operationReceipt"]["outputs"] == b["operationReceipt"]["outputs"] and a["artifacts"] == b["artifacts"]' \
+        "replay restores the run envelope from its receipt"
     if [[ $(wc -l <"$WORK/target-marker") -ne 1 ]]; then
         echo "Idempotent operation executed its target more than once." >&2
         return 1
