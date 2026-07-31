@@ -373,6 +373,13 @@ versioned schemas. Explicit `--output json` failures use `xceval.error/v1` with
 a stable code, retryability flag, message, and structured details. All current
 documents are publicly decodable through `XCEvalFormat`.
 
+Operation-state failures distinguish a missing receipt
+(`operation_not_found`), a live claim whose receipt is not visible yet
+(`operation_in_progress`, retryable), an identity conflict
+(`operation_conflict`), invalid persisted state, and retryable state I/O
+failures. Selection creation fails before writing when the chosen sample key is
+missing or non-unique.
+
 `inspect` exposes:
 
 - Evaluation and result identifiers.

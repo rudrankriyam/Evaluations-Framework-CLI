@@ -38,6 +38,9 @@ coding agents while keeping evaluation meaning in project-owned Swift.
 - Preserve one `xceval/v1` response shape for fresh and idempotently replayed
   runs, including live in-progress observations, with receipt-backed artifact
   metadata and an explicit replay marker.
+- Distinguish missing, pending, conflicting, invalid, and unavailable operation
+  state in structured errors; reject duplicate selected-sample keys before
+  writing a manifest.
 - Reject broad or protected destructive paths before producer execution.
 - Preserve structural sample failures alongside metric failures.
 - Add a disposable Tuist project that compiles directly against Xcode 27 Beta

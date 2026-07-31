@@ -4,6 +4,54 @@ import XCEvalCore
 
 @testable import XCEvalCLI
 
+@Test("Selection rejects duplicate sample keys before writing a manifest")
+func selectionRejectsDuplicateKeysBeforeWriting() throws {
+    let root = try mutationSafetyDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = root.appendingPathComponent("duplicate.xcevalresult")
+    try Data(
+        #"""
+        {
+          "evaluationID": "DuplicateKeys",
+          "resultID": "R",
+          "results": [
+            {
+              "Input": "{\"input\":{\"id\":\"shared\",\"prompt\":\"First\"}}"
+            },
+            {
+              "Input": "{\"input\":{\"id\":\"shared\",\"prompt\":\"Second\"}}"
+            }
+          ]
+        }
+        """#.utf8
+    ).write(to: source)
+    let destination = root.appendingPathComponent("selection.json")
+    var command = try #require(
+        try XCEvalRootCommand.parseAsRoot([
+            "select",
+            source.path,
+            "--sample-key",
+            "/input/id",
+            "--output-path",
+            destination.path,
+            "--output",
+            "text"
+        ]) as? SelectCommand
+    )
+
+    do {
+        try command.run()
+        Issue.record("Expected duplicate selection keys to fail.")
+    } catch {
+        #expect(
+            userFacingErrorMessage(error).contains(
+                "shared at indices 0, 1"
+            )
+        )
+    }
+    #expect(!FileManager.default.fileExists(atPath: destination.path))
+}
+
 @Test("Selection force cannot replace its source artifact")
 func selectionProtectsItsSource() throws {
     let root = try mutationSafetyDirectory()

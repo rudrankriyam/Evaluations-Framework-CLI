@@ -102,6 +102,35 @@ struct SelectCommand: ParsableCommand {
                     + "."
             )
         }
+        let duplicateKeys = Dictionary(
+            grouping: selected,
+            by: \.canonicalKey
+        )
+        .filter { $0.value.count > 1 }
+        .map { canonicalKey, samples in
+            (
+                key: displayKey(canonicalKey),
+                indices: samples.map(\.index).sorted()
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.key == rhs.key {
+                return lhs.indices.lexicographicallyPrecedes(rhs.indices)
+            }
+            return lhs.key < rhs.key
+        }
+        guard duplicateKeys.isEmpty else {
+            let description = duplicateKeys.map { duplicate in
+                "\(duplicate.key) at indices "
+                    + duplicate.indices.map(String.init).joined(separator: ", ")
+            }
+            .joined(separator: "; ")
+            throw ValidationError(
+                "Selected sample keys must be unique; duplicates: "
+                    + description
+                    + "."
+            )
+        }
 
         let destination = expandedURL(outputPath)
         let fileManager = FileManager.default

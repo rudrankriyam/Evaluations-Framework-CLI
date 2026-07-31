@@ -193,6 +193,13 @@ def write_json(name, value, *, pretty=True):
 write_json("baseline.xcevalresult", baseline)
 write_json("baseline-reformatted.xcevalresult", baseline, pretty=False)
 write_json("candidate.xcevalresult", candidate)
+duplicate_keys = copy.deepcopy(baseline)
+duplicate_keys["resultID"] = "DUPLICATE-KEYS"
+duplicate_keys["results"] = [
+    sample("shared", "First prompt", "first", "first", "pass", True),
+    sample("shared", "Second prompt", "second", "second", "pass", True),
+]
+write_json("duplicate-keys.xcevalresult", duplicate_keys)
 baseline_canonical = json.dumps(
     baseline,
     separators=(",", ":"),
@@ -330,6 +337,7 @@ PY
 BASE="$WORK/baseline.xcevalresult"
 REFORMATTED="$WORK/baseline-reformatted.xcevalresult"
 CANDIDATE="$WORK/candidate.xcevalresult"
+DUPLICATE_KEYS="$WORK/duplicate-keys.xcevalresult"
 TARGETS="$WORK/xceval.targets.json"
 STATE="$WORK/operation-state"
 SELECTION="$WORK/failures.selection.json"
@@ -423,6 +431,21 @@ test_selection_manifests() {
     assert_json "$LAST_STDOUT" \
         'd["schemaVersion"] == "xceval.selection/v1" and d["command"] == "select" and d["outputPath"].endswith("failures.selection.json")' \
         "select reports the persisted manifest"
+
+    local duplicate_selection="$WORK/duplicate.selection.json"
+    capture "$BIN" select "$DUPLICATE_KEYS" \
+        --sample-key /input/id \
+        --output-path "$duplicate_selection" \
+        --output json
+    require_failure "reject duplicate selection keys"
+    assert_json "$LAST_STDOUT" \
+        'd["schemaVersion"] == "xceval.error/v1" and d["command"] == "select" and d["error"]["code"] == "invalid_arguments" and d["error"]["retryable"] is False' \
+        "duplicate selection keys produce a structured failure"
+    if [[ -e "$duplicate_selection" ]]; then
+        echo "Duplicate selection keys wrote a manifest." >&2
+        return 1
+    fi
+    mark "duplicate selection keys fail before writing"
 }
 
 test_sample_compare() {
@@ -531,6 +554,67 @@ test_operation_receipts_and_timeouts() {
     assert_json "$LAST_STDOUT" \
         'd["schemaVersion"] == "xceval.error/v1" and d["command"] == "run" and d["error"]["code"] == "operation_conflict" and d["error"]["retryable"] is False and d["error"]["details"]["operationID"] == "operation-success"' \
         "operation conflict emits its documented machine contract"
+
+    capture "$BIN" operation operation-missing \
+        --state-directory "$STATE" \
+        --output json
+    require_failure "read missing operation"
+    assert_json "$LAST_STDOUT" \
+        'd["schemaVersion"] == "xceval.error/v1" and d["command"] == "operation" and d["error"]["code"] == "operation_not_found" and d["error"]["retryable"] is False and d["error"]["details"]["operationID"] == "operation-missing"' \
+        "missing operation is distinct from an identity conflict"
+
+    local pending_id="operation-pending"
+    local claim_digest
+    claim_digest="$(
+        python3 - "$pending_id" <<'PY'
+import hashlib
+import sys
+
+print(hashlib.sha256(sys.argv[1].encode()).hexdigest())
+PY
+    )"
+    local claim_path="$STATE/$claim_digest.claim"
+    local lock_ready="$WORK/pending-lock-ready"
+    python3 - "$claim_path" "$lock_ready" <<'PY' &
+import fcntl
+import pathlib
+import sys
+import time
+
+claim = pathlib.Path(sys.argv[1])
+claim.parent.mkdir(parents=True, exist_ok=True)
+with claim.open("a+b") as handle:
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    pathlib.Path(sys.argv[2]).write_text("ready\n", encoding="utf-8")
+    time.sleep(3)
+PY
+    local lock_pid=$!
+    local lock_observed=0
+    for _ in {1..100}; do
+        if [[ -f "$lock_ready" ]]; then
+            lock_observed=1
+            break
+        fi
+        sleep 0.02
+    done
+    if [[ $lock_observed -ne 1 ]]; then
+        echo "Pending-operation lock was not acquired in time." >&2
+        kill -KILL "$lock_pid" 2>/dev/null || true
+        wait "$lock_pid" 2>/dev/null
+        return 1
+    fi
+    capture "$BIN" run \
+        --results-path "$WORK/pending-results" \
+        --allow-empty \
+        --operation-id "$pending_id" \
+        --state-directory "$STATE" \
+        --output json \
+        -- /usr/bin/true
+    require_failure "observe pending operation claim"
+    assert_json "$LAST_STDOUT" \
+        'd["schemaVersion"] == "xceval.error/v1" and d["command"] == "run" and d["error"]["code"] == "operation_in_progress" and d["error"]["retryable"] is True and d["error"]["details"]["operationID"] == "operation-pending"' \
+        "pending operation claim is explicitly retryable"
+    wait "$lock_pid"
 
     capture "$BIN" run fixture.timeout \
         --targets "$TARGETS" \

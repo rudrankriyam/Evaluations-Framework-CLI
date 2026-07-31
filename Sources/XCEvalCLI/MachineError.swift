@@ -150,11 +150,42 @@ private func classifyMachineError(
         )
     }
     if let error = error as? OperationReceiptStoreError {
-        return (
-            "operation_conflict",
-            error.localizedDescription.contains("pending"),
-            [:]
-        )
+        switch error {
+        case .receiptNotFound(let operationID):
+            return (
+                "operation_not_found",
+                false,
+                ["operationID": .string(operationID)]
+            )
+        case .claimPending(let operationID):
+            return (
+                "operation_in_progress",
+                true,
+                ["operationID": .string(operationID)]
+            )
+        case .idempotencyKeyMismatch,
+            .receiptIdentityMismatch,
+            .terminalReceiptImmutable:
+            return ("operation_conflict", false, [:])
+        case .emptyIdempotencyKey, .emptyOperation,
+            .invalidTerminalState, .invalidLifecycleEvidence:
+            return ("operation_state_invalid", false, [:])
+        case .unsupportedSchema(let schemaVersion):
+            return (
+                "operation_state_invalid",
+                false,
+                ["schemaVersion": .string(schemaVersion)]
+            )
+        case .systemCall(let operation, let code):
+            return (
+                "operation_state_unavailable",
+                true,
+                [
+                    "operation": .string(operation),
+                    "errno": .integer(Int64(code))
+                ]
+            )
+        }
     }
     return ("command_failed", false, [:])
 }
