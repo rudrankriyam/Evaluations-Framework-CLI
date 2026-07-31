@@ -187,8 +187,36 @@ public struct OperationReceipt: Codable, Equatable, Sendable {
 
 /// Result of trying to claim an idempotency key.
 public enum OperationReceiptClaim: Sendable {
-    case claimed(OperationReceipt)
+    case claimed(OperationReceipt, OperationReceiptLease)
     case existing(OperationReceipt)
+}
+
+/// An exclusive cross-process lease for a running operation receipt.
+///
+/// Keep this value alive until the receipt reaches a terminal state. The
+/// operating system releases the advisory lock if the executor exits or
+/// crashes, allowing the next identical claim to recover the operation.
+public final class OperationReceiptLease: @unchecked Sendable {
+    private let lock = NSLock()
+    private var descriptor: Int32?
+
+    fileprivate init(descriptor: Int32) {
+        self.descriptor = descriptor
+    }
+
+    deinit {
+        release()
+    }
+
+    public func release() {
+        let descriptor = lock.withLock {
+            defer { self.descriptor = nil }
+            return self.descriptor
+        }
+        guard let descriptor else { return }
+        _ = flock(descriptor, LOCK_UN)
+        _ = close(descriptor)
+    }
 }
 
 /// Cross-process receipt storage with exclusive-create claims and atomic updates.
@@ -205,10 +233,12 @@ public struct OperationReceiptStore: Sendable {
         )
     }
 
-    /// Creates the first receipt for a key with `O_EXCL`.
+    /// Claims the execution lease for an idempotency key.
     ///
-    /// Concurrent callers receive the already-created receipt instead of
-    /// starting the same operation twice.
+    /// Concurrent callers receive the current running receipt instead of
+    /// starting the same operation twice. If the previous executor exited
+    /// without terminalizing its receipt, the abandoned lease is recovered as
+    /// the next attempt.
     public func claim(_ receipt: OperationReceipt) throws -> OperationReceiptClaim {
         try validate(receipt)
         try FileManager.default.createDirectory(
@@ -219,42 +249,63 @@ public struct OperationReceiptStore: Sendable {
         let claimURL = claimURL(for: receipt.idempotencyKey)
         let descriptor = Darwin.open(
             claimURL.path,
-            O_WRONLY | O_CREAT | O_EXCL,
+            O_RDWR | O_CREAT | O_CLOEXEC,
             S_IRUSR | S_IWUSR
         )
-        if descriptor == -1 {
-            if errno == EEXIST {
-                return .existing(
-                    try waitForReceipt(idempotencyKey: receipt.idempotencyKey)
-                )
-            }
+        guard descriptor != -1 else {
             throw OperationReceiptStoreError.systemCall(
                 operation: "open",
                 code: errno
             )
         }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            let code = errno
+            _ = close(descriptor)
+            if code == EWOULDBLOCK {
+                return .existing(
+                    try waitForReceipt(idempotencyKey: receipt.idempotencyKey)
+                )
+            }
+            throw OperationReceiptStoreError.systemCall(
+                operation: "lock claim",
+                code: code
+            )
+        }
+        let lease = OperationReceiptLease(descriptor: descriptor)
 
         do {
-            guard fsync(descriptor) == 0 else {
-                throw OperationReceiptStoreError.systemCall(
-                    operation: "fsync claim",
-                    code: errno
+            if FileManager.default.fileExists(atPath: url.path) {
+                let existing = try load(
+                    idempotencyKey: receipt.idempotencyKey
                 )
-            }
-            guard close(descriptor) == 0 else {
-                throw OperationReceiptStoreError.systemCall(
-                    operation: "close",
-                    code: errno
+                guard
+                    existing.state == .running,
+                    existing.operation == receipt.operation,
+                    existing.inputDigest == receipt.inputDigest
+                else {
+                    lease.release()
+                    return .existing(existing)
+                }
+                let recovered = OperationReceipt(
+                    operationID: existing.operationID,
+                    idempotencyKey: existing.idempotencyKey,
+                    operation: existing.operation,
+                    attempt:
+                        existing.attempt < Int.max
+                        ? existing.attempt + 1
+                        : Int.max,
+                    startedAt: receipt.startedAt,
+                    inputDigest: existing.inputDigest
                 )
+                try atomicWrite(encoded(recovered), to: url)
+                return .claimed(recovered, lease)
             }
-            try synchronizeDirectory()
             try atomicWrite(encoded(receipt), to: url)
+            return .claimed(receipt, lease)
         } catch {
-            _ = close(descriptor)
-            _ = unlink(claimURL.path)
+            lease.release()
             throw error
         }
-        return .claimed(receipt)
     }
 
     /// Atomically replaces an existing receipt with a later state.

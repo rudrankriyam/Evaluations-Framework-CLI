@@ -102,11 +102,15 @@ struct RunCommand: AsyncParsableCommand {
             return
         }
         let runningReceipt: OperationReceipt?
-        if case .claimed(let receipt) = operation {
+        let operationLease: OperationReceiptLease?
+        if case .claimed(let receipt, let lease) = operation {
             runningReceipt = receipt
+            operationLease = lease
         } else {
             runningReceipt = nil
+            operationLease = nil
         }
+        defer { operationLease?.release() }
 
         let before = artifactSnapshot(at: resultsURL)
         let process: ProcessResult
@@ -436,8 +440,8 @@ struct RunCommand: AsyncParsableCommand {
         )
         let store = OperationReceiptStore(directory: expandedURL(stateDirectory))
         switch try store.claim(receipt) {
-        case .claimed(let claimed):
-            return .claimed(claimed)
+        case .claimed(let claimed, let lease):
+            return .claimed(claimed, lease)
         case .existing(let existing):
             guard
                 existing.operation == "run",
@@ -598,7 +602,7 @@ private struct RunSelectionIdentity: Encodable {
 }
 
 private enum RunOperationClaim {
-    case claimed(OperationReceipt)
+    case claimed(OperationReceipt, OperationReceiptLease)
     case existing(OperationReceipt)
 }
 

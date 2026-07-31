@@ -9,8 +9,8 @@ coding agents while keeping evaluation meaning in project-owned Swift.
 
 - Declare runnable producers in `.xceval/targets.json`, discover them with
   `targets`, inspect one with `target`, and execute one with `run TARGET`.
-- Resume or audit idempotent runs through durable operation receipts and
-  bounded stdout/stderr logs.
+- Resume or audit idempotent runs through durable operation receipts,
+  crash-recoverable execution leases, and bounded stdout/stderr logs.
 - Address results by canonical artifact ID while retaining a byte digest for
   exact-source identity.
 - Select failures into a stable manifest, pass that manifest back to a
@@ -33,7 +33,8 @@ coding agents while keeping evaluation meaning in project-owned Swift.
 ### Reliability and verification
 
 - Add safe process timeouts, cancellation, TERM-to-KILL escalation, and
-  crash-durable operation state.
+  crash-durable operation state that recovers abandoned attempts without
+  duplicating a live executor.
 - Reject broad or protected destructive paths before producer execution.
 - Preserve structural sample failures alongside metric failures.
 - Add a disposable Tuist project that compiles directly against Xcode 27 Beta

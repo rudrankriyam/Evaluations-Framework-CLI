@@ -459,7 +459,9 @@ authoring assistance, orchestration, and generic evidence:
 1. `xceval api` discovers the installed interface and compile-verifies
    authoring recipes without choosing product semantics.
 2. `xceval run` launches a declared target, records a durable operation
-   receipt, and discovers new or changed `.xcevalresult` files.
+   receipt, recovers an attempt abandoned by a crashed executor, and discovers
+   new or changed `.xcevalresult` files. A live executor retains an exclusive
+   lease, so concurrent callers do not duplicate the producer.
 3. `xceval test` launches `xcodebuild`, preserves its `.xcresult`, and exports
    evaluation attachments even when tests fail.
 4. `xceval` validates, inspects, selects, profiles, compares, converts, and

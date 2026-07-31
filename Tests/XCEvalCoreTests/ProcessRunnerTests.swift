@@ -142,6 +142,11 @@ func operationReceiptClaimsAreIdempotent() async throws {
         operation: "evaluation.run",
         startedAt: Date(timeIntervalSince1970: 1_700_000_000)
     )
+    guard case .claimed(_, let lease) = try store.claim(receipt) else {
+        Issue.record("Expected the first receipt claim to succeed.")
+        return
+    }
+    defer { lease.release() }
 
     let claimedCount = try await withThrowingTaskGroup(
         of: Bool.self,
@@ -164,10 +169,55 @@ func operationReceiptClaimsAreIdempotent() async throws {
         return claimedCount
     }
 
-    #expect(claimedCount == 1)
+    #expect(claimedCount == 0)
     let persisted = try store.load(idempotencyKey: receipt.idempotencyKey)
     #expect(persisted.operationID == receipt.operationID)
     #expect(persisted.state == .running)
+    #expect(persisted.attempt == 1)
+}
+
+@Test("An abandoned running receipt is recovered as the next attempt")
+func operationReceiptRecoversAbandonedAttempt() throws {
+    let directory = temporaryTestDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = OperationReceiptStore(directory: directory)
+    let first = OperationReceipt(
+        idempotencyKey: "recover-after-crash",
+        operation: "evaluation.run",
+        startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+        inputDigest: "sha256:request"
+    )
+    guard
+        case .claimed(let claimed, let abandonedLease) =
+            try store.claim(first)
+    else {
+        Issue.record("Expected the first receipt claim to succeed.")
+        return
+    }
+    abandonedLease.release()
+
+    let retry = OperationReceipt(
+        idempotencyKey: first.idempotencyKey,
+        operation: first.operation,
+        startedAt: Date(timeIntervalSince1970: 1_700_000_100),
+        inputDigest: first.inputDigest
+    )
+    guard
+        case .claimed(let recovered, let retryLease) =
+            try store.claim(retry)
+    else {
+        Issue.record("Expected the abandoned receipt to be recovered.")
+        return
+    }
+    defer { retryLease.release() }
+
+    #expect(recovered.operationID == claimed.operationID)
+    #expect(recovered.attempt == 2)
+    #expect(recovered.state == .running)
+    #expect(recovered.startedAt == retry.startedAt)
+    #expect(recovered.inputDigest == first.inputDigest)
+    #expect(recovered.process == nil)
+    #expect(recovered.outputs.isEmpty)
 }
 
 @Test("Operation receipts update atomically and terminal states are immutable")
@@ -181,15 +231,16 @@ func operationReceiptsBecomeImmutableAtTerminalState() throws {
         operation: "xcodebuild.test",
         startedAt: startedAt
     )
-    guard case .claimed = try store.claim(receipt) else {
+    guard case .claimed(let claimed, let lease) = try store.claim(receipt) else {
         Issue.record("Expected the first receipt claim to succeed.")
         return
     }
+    defer { lease.release() }
     let result = try ProcessRunner.run(
         executable: URL(fileURLWithPath: "/usr/bin/true"),
         arguments: []
     )
-    let completed = receipt.completing(
+    let completed = claimed.completing(
         with: result,
         outputs: [
             OperationOutputArtifact(
