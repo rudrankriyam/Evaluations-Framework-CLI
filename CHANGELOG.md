@@ -44,6 +44,8 @@ coding agents while keeping evaluation meaning in project-owned Swift.
 - Refuse to rerun a producer when execution finished but its terminal receipt
   could not be committed, and reject duplicate keys in legacy dataset
   selections before materializing records.
+- Validate canonical identities in hand-edited selection manifests, and scan
+  every declared evaluation-result output with its own minimum-count policy.
 - Emit the same structured error envelope when JSON is selected implicitly by
   piped output as when `--output json` is explicit.
 - Treat run results as a non-destructive scan boundary so the producer working

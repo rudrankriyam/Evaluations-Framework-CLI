@@ -327,6 +327,7 @@ struct RunPayload: Encodable {
     let producerCommand: [String]
     let workingDirectory: String?
     let resultsPath: String
+    let resultsPaths: [String]
     let process: ProcessPayload?
     let artifacts: [ArtifactListItem]
     let operationReceipt: OperationReceipt?
@@ -336,7 +337,7 @@ struct RunPayload: Encodable {
     init(
         producerCommand: [String],
         workingDirectory: String?,
-        resultsPath: String,
+        resultsPaths: [String],
         process: ProcessResult,
         artifacts: [EvaluationArtifact],
         operationReceipt: OperationReceipt? = nil,
@@ -344,7 +345,8 @@ struct RunPayload: Encodable {
     ) {
         self.producerCommand = producerCommand
         self.workingDirectory = workingDirectory
-        self.resultsPath = resultsPath
+        resultsPath = resultsPaths[0]
+        self.resultsPaths = resultsPaths
         self.process = ProcessPayload(process)
         self.artifacts = artifacts.map(ArtifactListItem.init)
         self.operationReceipt = operationReceipt
@@ -355,7 +357,7 @@ struct RunPayload: Encodable {
     init(
         producerCommand: [String],
         workingDirectory: String?,
-        resultsPath: String,
+        resultsPaths: [String],
         process: OperationProcessOutcome?,
         artifacts: [ArtifactListItem],
         operationReceipt: OperationReceipt,
@@ -363,7 +365,8 @@ struct RunPayload: Encodable {
     ) {
         self.producerCommand = producerCommand
         self.workingDirectory = workingDirectory
-        self.resultsPath = resultsPath
+        resultsPath = resultsPaths[0]
+        self.resultsPaths = resultsPaths
         self.process = process.map(ProcessPayload.init(replaying:))
         self.artifacts = artifacts
         self.operationReceipt = operationReceipt

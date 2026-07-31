@@ -332,7 +332,9 @@ agent:
 
 Each target has a content-derived revision. Environment inheritance is an
 allowlist; undeclared parent values are not passed into a declared producer.
-Output paths are safety-checked before execution.
+Every non-`xcresult` output path is safety-checked, scanned, and validated
+against its own `minimumCount`. Run JSON retains `resultsPath` for compatibility
+and adds `resultsPaths` with the complete ordered scan set.
 
 ## Framework Boundaries
 

@@ -88,6 +88,169 @@ func invalidSelectionDoesNotClaimOperation() async throws {
     )
 }
 
+@Test("Duplicate canonical selection identities fail before execution")
+func duplicateCanonicalSelectionDoesNotClaimOperation() async throws {
+    let root = try temporaryRunDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let selection = root.appendingPathComponent(
+        "duplicate-canonical.selection.json"
+    )
+    let selectionDocument: [String: Any] = [
+        "schemaVersion": "xceval.selection/v1",
+        "sampleKey": "/id",
+        "count": 2,
+        "samples": [
+            [
+                "key": "display-a",
+                "canonicalKey": #""shared""#,
+                "index": 0
+            ],
+            [
+                "key": "display-b",
+                "canonicalKey": #""shared""#,
+                "index": 1
+            ]
+        ]
+    ]
+    try JSONSerialization.data(
+        withJSONObject: selectionDocument,
+        options: [.sortedKeys]
+    ).write(to: selection)
+    let marker = root.appendingPathComponent("producer-executed")
+    var command = try configuredRun(
+        root: root,
+        operationID: "duplicate-canonical-selection",
+        producerCommand: ["/usr/bin/touch", marker.path],
+        selection: selection
+    )
+    do {
+        try await command.run()
+        Issue.record("Expected duplicate canonical identities to fail.")
+    } catch {}
+
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
+    #expect(
+        !FileManager.default.fileExists(
+            atPath: operationStore(root: root).receiptURL(
+                for: "duplicate-canonical-selection"
+            ).path
+        )
+    )
+}
+
+@Test("Declared runs collect every evaluation output")
+func declaredRunCollectsEveryOutput() async throws {
+    let root = try temporaryRunDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let first = root.appendingPathComponent("results-a")
+    let second = root.appendingPathComponent("results-b")
+    let script = """
+        mkdir -p "$1" "$2"
+        printf '%s\n' \
+          '{"evaluationID":"Multiple","resultID":"A","results":[]}' \
+          > "$1/a.xcevalresult"
+        printf '%s\n' \
+          '{"evaluationID":"Multiple","resultID":"B","results":[]}' \
+          > "$2/b.xcevalresult"
+        """
+    let target = EvaluationTarget(
+        id: "multiple",
+        workingDirectory: root.path,
+        argv: [
+            "/bin/sh",
+            "-c",
+            script,
+            "sh",
+            first.path,
+            second.path
+        ],
+        outputs: [
+            EvaluationTargetOutput(
+                role: "first",
+                path: first.path,
+                minimumCount: 1
+            ),
+            EvaluationTargetOutput(
+                role: "second",
+                path: second.path,
+                minimumCount: 1
+            )
+        ]
+    )
+    var command = try configuredTargetRun(
+        root: root,
+        target: target,
+        operationID: "multiple-outputs"
+    )
+
+    try await command.run()
+
+    let persisted = try receipt(root: root, id: "multiple-outputs")
+    #expect(persisted.state == .succeeded)
+    #expect(persisted.outputs.map(\.resultID) == ["A", "B"])
+    #expect(
+        Set(
+            persisted.outputs.map {
+                URL(fileURLWithPath: $0.path)
+                    .deletingLastPathComponent()
+                    .lastPathComponent
+                    + "/"
+                    + URL(fileURLWithPath: $0.path).lastPathComponent
+            })
+            == Set([
+                "results-a/a.xcevalresult",
+                "results-b/b.xcevalresult"
+            ])
+    )
+}
+
+@Test("Each declared output enforces its own minimum")
+func declaredRunEnforcesEachOutputMinimum() async throws {
+    let root = try temporaryRunDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let first = root.appendingPathComponent("results-a")
+    let missing = root.appendingPathComponent("required-results-b")
+    let script = """
+        mkdir -p "$1"
+        printf '%s\n' \
+          '{"evaluationID":"Multiple","resultID":"A","results":[]}' \
+          > "$1/a.xcevalresult"
+        """
+    let target = EvaluationTarget(
+        id: "partial",
+        workingDirectory: root.path,
+        argv: ["/bin/sh", "-c", script, "sh", first.path],
+        outputs: [
+            EvaluationTargetOutput(
+                role: "first",
+                path: first.path,
+                minimumCount: 1
+            ),
+            EvaluationTargetOutput(
+                role: "required-second",
+                path: missing.path,
+                minimumCount: 1
+            )
+        ]
+    )
+    var command = try configuredTargetRun(
+        root: root,
+        target: target,
+        operationID: "partial-outputs"
+    )
+
+    do {
+        try await command.run()
+        Issue.record("Expected the missing declared output to fail.")
+    } catch {}
+
+    let persisted = try receipt(root: root, id: "partial-outputs")
+    #expect(persisted.state == .failed)
+    #expect(persisted.outputs.map(\.resultID) == ["A"])
+    #expect(persisted.errorMessage?.contains("required-second") == true)
+    #expect(persisted.errorMessage?.contains(missing.path) == true)
+}
+
 @Test("An identical operation replay never re-executes its producer")
 func identicalReplayDoesNotExecuteAgain() async throws {
     let root = try temporaryRunDirectory()
@@ -397,6 +560,35 @@ private func configuredRun(
     arguments += ["--"] + producerCommand
     return try #require(
         try XCEvalRootCommand.parseAsRoot(arguments) as? RunCommand
+    )
+}
+
+private func configuredTargetRun(
+    root: URL,
+    target: EvaluationTarget,
+    operationID: String
+) throws -> RunCommand {
+    let manifestURL = root.appendingPathComponent(
+        "\(target.id).targets.json"
+    )
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    try encoder.encode(
+        EvaluationTargetManifest(targets: [target])
+    ).write(to: manifestURL)
+    return try #require(
+        try XCEvalRootCommand.parseAsRoot([
+            "run",
+            target.id,
+            "--targets",
+            manifestURL.path,
+            "--operation-id",
+            operationID,
+            "--state-directory",
+            root.appendingPathComponent("operations").path,
+            "--output",
+            "text"
+        ]) as? RunCommand
     )
 }
 

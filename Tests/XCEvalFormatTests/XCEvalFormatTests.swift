@@ -285,6 +285,7 @@ func decodesExecutionDocuments() throws {
     }
     #expect(runDocument.process?.status == 0)
     #expect(runDocument.artifacts.count == 1)
+    #expect(runDocument.resultsPaths == nil)
 
     let test = try XCEvalDocumentDecoder.decode(
         json(

@@ -23,7 +23,10 @@ struct RunCommand: AsyncParsableCommand {
 
     @Option(
         name: .long,
-        help: "File or directory where the producer writes evaluation artifacts."
+        help: """
+            Single results path for a legacy producer, or an explicit override \
+            of a declared target's evaluation outputs.
+            """
     )
     var resultsPath: String?
 
@@ -89,7 +92,6 @@ struct RunCommand: AsyncParsableCommand {
         }
         let output = try outputOptions.resolve()
         let invocation = try resolvedInvocation()
-        let resultsURL = invocation.resultsURL
         let operation = try claimOperation(
             invocation: invocation,
             output: output
@@ -116,7 +118,9 @@ struct RunCommand: AsyncParsableCommand {
         }
         defer { operationLease?.release() }
 
-        let before = artifactSnapshot(at: resultsURL)
+        let before = invocation.outputs.map {
+            artifactSnapshot(at: $0.url)
+        }
         let process: ProcessResult
         do {
             process = try await ProcessRunner.runAsync(
@@ -141,23 +145,26 @@ struct RunCommand: AsyncParsableCommand {
             throw error
         }
 
-        let artifacts: [EvaluationArtifact]
+        let artifactsByOutput: [[EvaluationArtifact]]
         do {
-            let after = artifactSnapshot(at: resultsURL)
-            let changedPaths = after.keys.filter {
-                includeExisting || before[$0] != after[$0]
-            }.sorted()
-            artifacts = try changedPaths.flatMap {
-                let loaded = try EvaluationArtifactLoader.load(
-                    from: URL(fileURLWithPath: $0)
-                )
-                if includeExisting {
-                    return loaded
+            artifactsByOutput = try invocation.outputs.enumerated().map {
+                index, output in
+                let after = artifactSnapshot(at: output.url)
+                let changedPaths = after.keys.filter {
+                    includeExisting || before[index][$0] != after[$0]
+                }.sorted()
+                return try changedPaths.flatMap {
+                    let loaded = try EvaluationArtifactLoader.load(
+                        from: URL(fileURLWithPath: $0)
+                    )
+                    if includeExisting {
+                        return loaded
+                    }
+                    return artifactsAddedOrChanged(
+                        loaded,
+                        comparedTo: before[index][$0]
+                    )
                 }
-                return artifactsAddedOrChanged(
-                    loaded,
-                    comparedTo: before[$0]
-                )
             }
         } catch {
             try failOperation(
@@ -167,9 +174,18 @@ struct RunCommand: AsyncParsableCommand {
             )
             throw error
         }
+        var seenArtifacts = Set<String>()
+        let artifacts = artifactsByOutput.flatMap { $0 }.filter {
+            seenArtifacts.insert($0.sourceDescription).inserted
+        }.sorted {
+            if $0.sourceURL.path == $1.sourceURL.path {
+                return ($0.sourceLine ?? 0) < ($1.sourceLine ?? 0)
+            }
+            return $0.sourceURL.path < $1.sourceURL.path
+        }
         let artifactError = minimumArtifactError(
-            invocation.minimumArtifactCount,
-            artifacts: artifacts,
+            invocation.outputs,
+            artifactsByOutput: artifactsByOutput,
             process: process
         )
 
@@ -182,7 +198,7 @@ struct RunCommand: AsyncParsableCommand {
         let payload = RunPayload(
             producerCommand: invocation.command,
             workingDirectory: invocation.workingDirectory?.path,
-            resultsPath: resultsURL.path,
+            resultsPaths: invocation.outputs.map(\.url.path),
             process: process,
             artifacts: artifacts,
             operationReceipt: completedReceipt,
@@ -217,21 +233,41 @@ struct RunCommand: AsyncParsableCommand {
                     resolvePath($0, relativeTo: manifestDirectory)
                 }
                 ?? manifestDirectory
-            guard
-                let output = target.outputs.first(where: {
-                    $0.format != .xcresult
-                })
-            else {
+            let declaredOutputs = target.outputs.filter {
+                $0.format != .xcresult
+            }
+            guard !declaredOutputs.isEmpty else {
                 throw ValidationError(
                     "Target '\(targetID)' has no evaluation-result output."
                 )
             }
-            let resolvedResults =
-                resultsPath.map {
-                    resolvePath($0, relativeTo: resolvedWorkingDirectory)
+            let resolvedOutputs: [ResolvedRunOutput]
+            if let resultsPath {
+                resolvedOutputs = [
+                    ResolvedRunOutput(
+                        role: declaredOutputs[0].role,
+                        url: resolvePath(
+                            resultsPath,
+                            relativeTo: resolvedWorkingDirectory
+                        ),
+                        minimumCount: declaredOutputs[0].minimumCount
+                    )
+                ]
+            } else {
+                resolvedOutputs = declaredOutputs.map {
+                    ResolvedRunOutput(
+                        role: $0.role,
+                        url: resolvePath(
+                            $0.path,
+                            relativeTo: resolvedWorkingDirectory
+                        ),
+                        minimumCount: $0.minimumCount
+                    )
                 }
-                ?? resolvePath(output.path, relativeTo: resolvedWorkingDirectory)
-            try validateRunOutput(resolvedResults)
+            }
+            for output in resolvedOutputs {
+                try validateRunOutput(output.url)
+            }
             var environment = target.resolvedEnvironment()
             if target.argv.first?.contains("/") != true,
                 environment["PATH"] == nil
@@ -261,10 +297,9 @@ struct RunCommand: AsyncParsableCommand {
             return ResolvedRunInvocation(
                 command: target.argv,
                 workingDirectory: resolvedWorkingDirectory,
-                resultsURL: resolvedResults,
+                outputs: resolvedOutputs,
                 environment: environment,
                 targetRevision: target.revision,
-                minimumArtifactCount: output.minimumCount,
                 selection: resolvedSelection
             )
         }
@@ -299,10 +334,15 @@ struct RunCommand: AsyncParsableCommand {
         return ResolvedRunInvocation(
             command: producerCommand,
             workingDirectory: resolvedWorkingDirectory,
-            resultsURL: resolvedResults,
+            outputs: [
+                ResolvedRunOutput(
+                    role: "legacy-results",
+                    url: resolvedResults,
+                    minimumCount: nil
+                )
+            ],
             environment: environment,
             targetRevision: nil,
-            minimumArtifactCount: nil,
             selection: resolvedSelection
         )
     }
@@ -357,6 +397,7 @@ struct RunCommand: AsyncParsableCommand {
             )
         }
         var selectedKeys = Set<String>()
+        var canonicalKeys = Set<String>()
         for sample in samples {
             guard
                 let value = sample as? [String: Any],
@@ -370,6 +411,18 @@ struct RunCommand: AsyncParsableCommand {
                     "Every selected sample must contain a unique nonempty key "
                         + "and nonnegative integer index."
                 )
+            }
+            if let rawCanonicalKey = value["canonicalKey"] {
+                guard
+                    let canonicalKey = rawCanonicalKey as? String,
+                    !canonicalKey.isEmpty,
+                    canonicalKeys.insert(canonicalKey).inserted
+                else {
+                    throw ValidationError(
+                        "Every selected sample canonicalKey must be a unique "
+                            + "nonempty string."
+                    )
+                }
             }
         }
         let canonical = try JSONSerialization.data(
@@ -434,14 +487,14 @@ struct RunCommand: AsyncParsableCommand {
             RunRequestIdentity(
                 command: invocation.command,
                 workingDirectory: invocation.workingDirectory?.path,
-                resultsPath: invocation.resultsURL.path,
+                resultsPath: invocation.outputs[0].url.path,
                 targetRevision: invocation.targetRevision,
                 environmentDigest: environmentDigest.description,
                 selection: invocation.selection,
                 timeout: timeout,
                 includeExisting: includeExisting,
                 allowEmpty: allowEmpty,
-                minimumArtifactCount: invocation.minimumArtifactCount
+                minimumArtifactCount: invocation.outputs[0].minimumCount
             )
         )
         let receipt = OperationReceipt(
@@ -524,24 +577,32 @@ struct RunCommand: AsyncParsableCommand {
     }
 
     private func minimumArtifactError(
-        _ minimumCount: Int?,
-        artifacts: [EvaluationArtifact],
+        _ outputs: [ResolvedRunOutput],
+        artifactsByOutput: [[EvaluationArtifact]],
         process: ProcessResult
     ) -> String? {
         guard process.status == 0 else {
             return nil
         }
-        if artifacts.isEmpty, allowEmpty {
+        let artifactCount = artifactsByOutput.reduce(0) {
+            $0 + $1.count
+        }
+        if artifactCount == 0, allowEmpty {
             return nil
         }
-        if let minimumCount, artifacts.count < minimumCount {
-            return "The target requires at least \(minimumCount) artifact(s), but "
-                + "the run produced \(artifacts.count)."
+        for (output, artifacts) in zip(outputs, artifactsByOutput) {
+            if let minimumCount = output.minimumCount,
+                artifacts.count < minimumCount
+            {
+                return "Target output '\(output.role)' at \(output.url.path) "
+                    + "requires at least \(minimumCount) artifact(s), but the "
+                    + "run produced \(artifacts.count) there."
+            }
         }
-        if artifacts.isEmpty, !allowEmpty {
+        if artifactCount == 0, !allowEmpty {
             return """
                 The producer succeeded but no new or changed evaluation artifacts \
-                were found under the requested results path.
+                were found under the requested results paths.
                 """
         }
         return nil
@@ -605,7 +666,7 @@ struct RunCommand: AsyncParsableCommand {
                 RunPayload(
                     producerCommand: invocation.command,
                     workingDirectory: invocation.workingDirectory?.path,
-                    resultsPath: invocation.resultsURL.path,
+                    resultsPaths: invocation.outputs.map(\.url.path),
                     process: receipt.process,
                     artifacts: artifacts,
                     operationReceipt: receipt,
@@ -622,11 +683,16 @@ struct RunCommand: AsyncParsableCommand {
 private struct ResolvedRunInvocation {
     let command: [String]
     let workingDirectory: URL?
-    let resultsURL: URL
+    let outputs: [ResolvedRunOutput]
     let environment: [String: String]
     let targetRevision: String?
-    let minimumArtifactCount: Int?
     let selection: RunSelectionIdentity?
+}
+
+private struct ResolvedRunOutput {
+    let role: String
+    let url: URL
+    let minimumCount: Int?
 }
 
 private struct RunRequestIdentity: Encodable {

@@ -217,6 +217,10 @@ func decodesExpandedRunDocument() throws {
               "producerCommand":["swift","run","Evaluate"],
               "workingDirectory":"/tmp/project",
               "resultsPath":"/tmp/project/results",
+              "resultsPaths":[
+                "/tmp/project/results",
+                "/tmp/project/secondary-results"
+              ],
               "process":\(agentProcess),
               "artifacts":[],
               "operationReceipt":\(operationReceipt),
@@ -237,6 +241,12 @@ func decodesExpandedRunDocument() throws {
     #expect(run.operationReceipt?.state == .timedOut)
     #expect(run.errorMessage == "The producer timed out.")
     #expect(run.replayed == true)
+    #expect(
+        run.resultsPaths == [
+            "/tmp/project/results",
+            "/tmp/project/secondary-results"
+        ]
+    )
 }
 
 @Test("Run documents represent a live idempotent observer")

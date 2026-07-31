@@ -244,6 +244,26 @@ write_json(
         ],
     },
 )
+write_json(
+    "duplicate-canonical.selection.json",
+    {
+        "schemaVersion": "xceval.selection/v1",
+        "sampleKey": "/input/id",
+        "count": 2,
+        "samples": [
+            {
+                "key": "display-a",
+                "canonicalKey": '"shared"',
+                "index": 0,
+            },
+            {
+                "key": "display-b",
+                "canonicalKey": '"shared"',
+                "index": 1,
+            },
+        ],
+    },
+)
 
 golden = [
     {
@@ -327,6 +347,37 @@ targets = {
             "requirements": [],
         },
         {
+            "id": "fixture.multiple-outputs",
+            "kind": "command",
+            "workingDirectory": str(root),
+            "argv": [
+                "/bin/sh",
+                "-c",
+                'mkdir -p "$1" "$2"; cp "$3" "$1/first.xcevalresult"; cp "$4" "$2/second.xcevalresult"',
+                "_",
+                str(root / "multiple-results-a"),
+                str(root / "multiple-results-b"),
+                str(root / "baseline.xcevalresult"),
+                str(root / "candidate.xcevalresult"),
+            ],
+            "environment": {"inherit": [], "set": {}},
+            "outputs": [
+                {
+                    "role": "first-results",
+                    "path": str(root / "multiple-results-a"),
+                    "format": "xcevalresult",
+                    "minimumCount": 1,
+                },
+                {
+                    "role": "second-results",
+                    "path": str(root / "multiple-results-b"),
+                    "format": "xcevalresult",
+                    "minimumCount": 1,
+                },
+            ],
+            "requirements": [],
+        },
+        {
             "id": "fixture.unsafe",
             "kind": "command",
             "workingDirectory": str(root),
@@ -372,6 +423,7 @@ SELECTION="$WORK/failures.selection.json"
 SEED_SELECTION="$WORK/seed.selection.json"
 DATASET_SELECTION="$WORK/dataset.selection.json"
 DUPLICATE_DATASET_SELECTION="$WORK/dataset-duplicate.selection.json"
+DUPLICATE_CANONICAL_SELECTION="$WORK/duplicate-canonical.selection.json"
 GOLDEN="$WORK/golden.dataset.json"
 INVALID_DATASET="$WORK/invalid.dataset.json"
 
@@ -433,7 +485,7 @@ test_targets() {
     capture "$BIN" targets "$TARGETS" --output json
     require_success "list declared targets"
     assert_json "$LAST_STDOUT" \
-        'd["schemaVersion"] == "xceval.targets/v1" and d["command"] == "targets" and d["count"] == 4 and [x["id"] for x in d["targets"]] == ["fixture.evaluate", "fixture.empty", "fixture.timeout", "fixture.unsafe"]' \
+        'd["schemaVersion"] == "xceval.targets/v1" and d["command"] == "targets" and d["count"] == 5 and [x["id"] for x in d["targets"]] == ["fixture.evaluate", "fixture.empty", "fixture.timeout", "fixture.multiple-outputs", "fixture.unsafe"]' \
         "targets lists ordered declared targets"
     assert_json "$LAST_STDOUT" \
         'd["targets"][0]["kind"] == "command" and d["targets"][0]["revision"].startswith("sha256:") and d["targets"][0]["argv"][0] == "/bin/sh" and d["targets"][0]["outputs"][0]["role"] == "evaluation-results"' \
@@ -444,6 +496,14 @@ test_targets() {
     assert_json "$LAST_STDOUT" \
         'd["schemaVersion"] == "xceval.targets/v1" and d["command"] == "target" and d["target"]["id"] == "fixture.evaluate" and isinstance(d["target"]["environment"]["set"], dict)' \
         "target resolves one complete declaration"
+
+    capture "$BIN" run fixture.multiple-outputs \
+        --targets "$TARGETS" \
+        --output json
+    require_success "run every declared evaluation output"
+    assert_json "$LAST_STDOUT" \
+        'd["schemaVersion"] == "xceval/v1" and d["command"] == "run" and len(d["resultsPaths"]) == 2 and d["resultsPath"] == d["resultsPaths"][0] and [x["resultID"] for x in d["artifacts"]] == ["BASELINE", "CANDIDATE"] and all(any(("/" + path.split("/")[-1] + "/") in x["path"] for x in d["artifacts"]) for path in d["resultsPaths"])' \
+        "target run scans every declared evaluation output"
 
     capture "$BIN" target missing.target --manifest "$TARGETS" --output json
     require_failure "unknown target"
@@ -481,6 +541,20 @@ test_selection_manifests() {
         return 1
     fi
     mark "duplicate selection keys fail before writing"
+
+    capture "$BIN" run fixture.evaluate \
+        --targets "$TARGETS" \
+        --selection "$DUPLICATE_CANONICAL_SELECTION" \
+        --output json
+    require_failure "reject duplicate canonical selection identities"
+    assert_json "$LAST_STDOUT" \
+        'd["schemaVersion"] == "xceval.error/v1" and d["command"] == "run" and d["error"]["code"] == "invalid_arguments" and d["error"]["retryable"] is False' \
+        "duplicate canonical selection identities are structured failures"
+    if [[ -e "$WORK/target-marker" ]]; then
+        echo "Invalid canonical selection executed its target." >&2
+        return 1
+    fi
+    mark "duplicate canonical selection fails before target execution"
 }
 
 test_sample_compare() {
