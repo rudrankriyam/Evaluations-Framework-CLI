@@ -49,6 +49,16 @@ func decodesSamplesJSONLinesFixture() throws {
     #expect(lines.first?.sample.index == 0)
 }
 
+@Test(
+    "Empty JSON Lines output decodes as an empty sample list",
+    arguments: [Data(), Data(" \t\r\n".utf8)]
+)
+func decodesEmptySamplesJSONLines(data: Data) throws {
+    let lines = try XCEvalDocumentDecoder.decodeJSONLines(data)
+
+    #expect(lines.isEmpty)
+}
+
 @Test("Decoder rejects unsupported schemas and commands")
 func rejectsUnsupportedDocuments() {
     #expect(

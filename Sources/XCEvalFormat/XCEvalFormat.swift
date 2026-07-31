@@ -240,9 +240,6 @@ public enum XCEvalDocumentDecoder {
                 )
             }
         }
-        guard !documents.isEmpty else {
-            throw XCEvalFormatError.emptyJSONLines
-        }
         return documents
     }
 }
@@ -251,7 +248,6 @@ public enum XCEvalFormatError: LocalizedError, Equatable, Sendable {
     case unsupportedSchema(String)
     case unsupportedCommand(String)
     case invalidJSONLine(line: Int, message: String)
-    case emptyJSONLines
 
     public var errorDescription: String? {
         switch self {
@@ -264,8 +260,6 @@ public enum XCEvalFormatError: LocalizedError, Equatable, Sendable {
             "Unsupported normalized xceval command '\(command)'."
         case .invalidJSONLine(let line, let message):
             "Invalid normalized xceval JSON at line \(line): \(message)"
-        case .emptyJSONLines:
-            "The normalized xceval JSON Lines input contains no sample rows."
         }
     }
 }
