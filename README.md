@@ -277,6 +277,12 @@ producer should rerun. Artifact IDs are canonical across JSON formatting, while
 byte digests preserve the exact source. Dataset promotion is explicit and never
 copies a model response into an expected label.
 
+`run` treats its results path as a scan boundary, so legacy producers may use
+their working directory. Filesystem root and the home directory remain rejected
+as overly broad scans. `--allow-empty` permits a successful zero-artifact run
+even when a declared target normally requires artifacts; partial output still
+has to satisfy the target's `minimumCount`.
+
 The loop is intentionally open-ended. Codex, another coding agent, CI, or a
 developer can decide what source to inspect and change. `xceval` only reports
 facts, executes declared commands, and persists reproducible evidence.

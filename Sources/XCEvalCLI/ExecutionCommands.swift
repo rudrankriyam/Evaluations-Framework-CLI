@@ -221,10 +221,7 @@ struct RunCommand: AsyncParsableCommand {
                     resolvePath($0, relativeTo: resolvedWorkingDirectory)
                 }
                 ?? resolvePath(output.path, relativeTo: resolvedWorkingDirectory)
-            try validateRunOutput(
-                resolvedResults,
-                workingDirectory: resolvedWorkingDirectory
-            )
+            try validateRunOutput(resolvedResults)
             var environment = target.resolvedEnvironment()
             if target.argv.first?.contains("/") != true,
                 environment["PATH"] == nil
@@ -278,11 +275,7 @@ struct RunCommand: AsyncParsableCommand {
             relativeTo: resolvedWorkingDirectory
                 ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         )
-        try validateRunOutput(
-            resolvedResults,
-            workingDirectory: resolvedWorkingDirectory
-                ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        )
+        try validateRunOutput(resolvedResults)
         var environment = ProcessInfo.processInfo.environment
         let resolvedSelection = try selection.map {
             try selectionIdentity(at: $0)
@@ -408,14 +401,15 @@ struct RunCommand: AsyncParsableCommand {
         )
     }
 
-    private func validateRunOutput(
-        _ output: URL,
-        workingDirectory: URL
-    ) throws {
-        try DestructivePathPolicy(
-            allowedRoot: output.deletingLastPathComponent(),
-            protectedPaths: [workingDirectory]
-        ).validate(targets: [output])
+    private func validateRunOutput(_ output: URL) throws {
+        let canonical = output.standardizedFileURL.resolvingSymlinksInPath()
+        let home =
+            FileManager.default.homeDirectoryForCurrentUser
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        guard canonical.path != "/", canonical != home else {
+            throw DestructivePathError.broadTarget(canonical.path)
+        }
     }
 
     private func claimOperation(
@@ -525,6 +519,9 @@ struct RunCommand: AsyncParsableCommand {
         process: ProcessResult
     ) -> String? {
         guard process.status == 0 else {
+            return nil
+        }
+        if artifacts.isEmpty, allowEmpty {
             return nil
         }
         if let minimumCount, artifacts.count < minimumCount {

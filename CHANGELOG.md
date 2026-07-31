@@ -43,6 +43,9 @@ coding agents while keeping evaluation meaning in project-owned Swift.
   writing a manifest.
 - Emit the same structured error envelope when JSON is selected implicitly by
   piped output as when `--output json` is explicit.
+- Treat run results as a non-destructive scan boundary so the producer working
+  directory remains valid, and honor `--allow-empty` for declared zero-artifact
+  runs before applying target minimum-count policy.
 - Reject broad or protected destructive paths before producer execution.
 - Preserve structural sample failures alongside metric failures.
 - Add a disposable Tuist project that compiles directly against Xcode 27 Beta

@@ -283,6 +283,22 @@ targets = {
             "requirements": [],
         },
         {
+            "id": "fixture.empty",
+            "kind": "command",
+            "workingDirectory": str(root),
+            "argv": ["/usr/bin/true"],
+            "environment": {"inherit": [], "set": {}},
+            "outputs": [
+                {
+                    "role": "evaluation-results",
+                    "path": str(root / "empty-target-results"),
+                    "format": "xcevalresult",
+                    "minimumCount": 1,
+                }
+            ],
+            "requirements": [],
+        },
+        {
             "id": "fixture.timeout",
             "kind": "command",
             "workingDirectory": str(root),
@@ -404,7 +420,7 @@ test_targets() {
     capture "$BIN" targets "$TARGETS" --output json
     require_success "list declared targets"
     assert_json "$LAST_STDOUT" \
-        'd["schemaVersion"] == "xceval.targets/v1" and d["command"] == "targets" and d["count"] == 3 and [x["id"] for x in d["targets"]] == ["fixture.evaluate", "fixture.timeout", "fixture.unsafe"]' \
+        'd["schemaVersion"] == "xceval.targets/v1" and d["command"] == "targets" and d["count"] == 4 and [x["id"] for x in d["targets"]] == ["fixture.evaluate", "fixture.empty", "fixture.timeout", "fixture.unsafe"]' \
         "targets lists ordered declared targets"
     assert_json "$LAST_STDOUT" \
         'd["targets"][0]["kind"] == "command" and d["targets"][0]["revision"].startswith("sha256:") and d["targets"][0]["argv"][0] == "/bin/sh" and d["targets"][0]["outputs"][0]["role"] == "evaluation-results"' \
@@ -622,6 +638,15 @@ PY
         "pending operation claim is explicitly retryable"
     wait "$lock_pid"
 
+    capture "$BIN" run fixture.empty \
+        --targets "$TARGETS" \
+        --allow-empty \
+        --output json
+    require_success "allow empty declared target"
+    assert_json "$LAST_STDOUT" \
+        'd["schemaVersion"] == "xceval/v1" and d["command"] == "run" and d["process"]["status"] == 0 and d["artifacts"] == []' \
+        "allow-empty overrides a declared minimum for a zero-artifact run"
+
     capture "$BIN" run fixture.timeout \
         --targets "$TARGETS" \
         --operation-id operation-timeout \
@@ -803,6 +828,21 @@ test_existing_compatibility() {
     assert_json "$LAST_STDOUT" \
         'd["schemaVersion"] == "xceval/v1" and d["command"] == "run" and d["process"]["status"] == 0 and d["artifacts"] == []' \
         "legacy run remains source compatible"
+
+    local current_results="$WORK/legacy-current-results"
+    mkdir -p "$current_results"
+    capture "$BIN" run \
+        --working-directory "$current_results" \
+        --results-path . \
+        --allow-empty \
+        --output json \
+        -- /usr/bin/touch producer-ran
+    require_success "legacy current-directory result scan"
+    assert_file_exists "$current_results/producer-ran" \
+        "current-directory results path does not block the producer"
+    assert_json "$LAST_STDOUT" \
+        'd["schemaVersion"] == "xceval/v1" and d["command"] == "run" and d["resultsPath"].endswith("legacy-current-results") and d["process"]["status"] == 0' \
+        "current-directory results path remains a non-destructive scan"
 
     capture "$BIN" inspect "$BASE" --summary-only --output json
     require_success "legacy inspect contract"
