@@ -54,6 +54,19 @@ public struct EvaluationArtifact: Sendable {
         return "\(sourceURL.path):\(sourceLine)"
     }
 
+    /// Digest of canonical sorted-key JSON, invariant to source formatting.
+    public var artifactID: String {
+        let canonical =
+            (try? JSONValue.object(root).encodedData())
+            ?? rawData
+        return ContentDigest(data: canonical).description
+    }
+
+    /// Digest of the exact persisted bytes for provenance and diagnostics.
+    public var byteDigest: String {
+        ContentDigest(data: rawData).description
+    }
+
     public var evaluationID: String? {
         root["evaluationID"]?.stringValue
     }
@@ -152,6 +165,205 @@ public struct EvaluationArtifact: Sendable {
                 candidate: candidateByOccurrence[occurrence]?.value
             )
         }
+    }
+
+    public func sampleComparisons(
+        with candidate: EvaluationArtifact,
+        keyStrategy: EvaluationSampleKeyStrategy,
+        includingStructuralDifferences: Bool = false
+    ) -> [EvaluationSampleComparison] {
+        let baselineGroups = groupedSamples(using: keyStrategy)
+        let candidateGroups = candidate.groupedSamples(using: keyStrategy)
+        var comparisons: [EvaluationSampleComparison] = []
+        var seen = Set<EvaluationSampleKey>()
+
+        for key in baselineGroups.keyOrder {
+            seen.insert(key)
+            comparisons.append(
+                contentsOf: compareSampleGroup(
+                    key: key,
+                    baseline: baselineGroups.samplesByKey[key] ?? [],
+                    candidate: candidateGroups.samplesByKey[key] ?? [],
+                    includingStructuralDifferences:
+                        includingStructuralDifferences
+                )
+            )
+        }
+        for key in candidateGroups.keyOrder where seen.insert(key).inserted {
+            comparisons.append(
+                contentsOf: compareSampleGroup(
+                    key: key,
+                    baseline: [],
+                    candidate: candidateGroups.samplesByKey[key] ?? [],
+                    includingStructuralDifferences:
+                        includingStructuralDifferences
+                )
+            )
+        }
+
+        comparisons.append(
+            contentsOf: baselineGroups.unkeyed.map {
+                EvaluationSampleComparison(
+                    classification: .unjoinable,
+                    key: nil,
+                    baselineSamples: [$0],
+                    candidateSamples: []
+                )
+            })
+        comparisons.append(
+            contentsOf: candidateGroups.unkeyed.map {
+                EvaluationSampleComparison(
+                    classification: .unjoinable,
+                    key: nil,
+                    baselineSamples: [],
+                    candidateSamples: [$0]
+                )
+            })
+        return comparisons
+    }
+
+    private func groupedSamples(
+        using strategy: EvaluationSampleKeyStrategy
+    ) -> SampleGroups {
+        var samplesByKey: [EvaluationSampleKey: [EvaluationSample]] = [:]
+        var keyOrder: [EvaluationSampleKey] = []
+        var unkeyed: [EvaluationSample] = []
+        for sample in samples {
+            guard let key = sample.stableKey(using: strategy) else {
+                unkeyed.append(sample)
+                continue
+            }
+            if samplesByKey[key] == nil {
+                keyOrder.append(key)
+            }
+            samplesByKey[key, default: []].append(sample)
+        }
+        return SampleGroups(
+            samplesByKey: samplesByKey,
+            keyOrder: keyOrder,
+            unkeyed: unkeyed
+        )
+    }
+}
+
+public enum EvaluationSampleComparisonClassification:
+    String,
+    CaseIterable,
+    Codable,
+    Equatable,
+    Sendable
+{
+    case regressed
+    case fixed
+    case changed
+    case added
+    case removed
+    case unjoinable
+}
+
+public struct EvaluationSampleComparison:
+    Codable,
+    Equatable,
+    Sendable
+{
+    public let classification: EvaluationSampleComparisonClassification
+    public let key: EvaluationSampleKey?
+    public let baselineSamples: [EvaluationSample]
+    public let candidateSamples: [EvaluationSample]
+
+    public init(
+        classification: EvaluationSampleComparisonClassification,
+        key: EvaluationSampleKey?,
+        baselineSamples: [EvaluationSample],
+        candidateSamples: [EvaluationSample]
+    ) {
+        self.classification = classification
+        self.key = key
+        self.baselineSamples = baselineSamples
+        self.candidateSamples = candidateSamples
+    }
+}
+
+private struct SampleGroups {
+    let samplesByKey: [EvaluationSampleKey: [EvaluationSample]]
+    let keyOrder: [EvaluationSampleKey]
+    let unkeyed: [EvaluationSample]
+}
+
+private func compareSampleGroup(
+    key: EvaluationSampleKey,
+    baseline: [EvaluationSample],
+    candidate: [EvaluationSample],
+    includingStructuralDifferences: Bool
+) -> [EvaluationSampleComparison] {
+    guard baseline.count <= 1, candidate.count <= 1 else {
+        return [
+            EvaluationSampleComparison(
+                classification: .unjoinable,
+                key: key,
+                baselineSamples: baseline,
+                candidateSamples: candidate
+            )
+        ]
+    }
+    guard let baselineSample = baseline.first else {
+        return [
+            EvaluationSampleComparison(
+                classification: .added,
+                key: key,
+                baselineSamples: [],
+                candidateSamples: candidate
+            )
+        ]
+    }
+    guard let candidateSample = candidate.first else {
+        return [
+            EvaluationSampleComparison(
+                classification: .removed,
+                key: key,
+                baselineSamples: baseline,
+                candidateSamples: []
+            )
+        ]
+    }
+
+    let baselineFailed = baselineSample.hasFailure(
+        includingStructuralDifferences: includingStructuralDifferences
+    )
+    let candidateFailed = candidateSample.hasFailure(
+        includingStructuralDifferences: includingStructuralDifferences
+    )
+    let classification: EvaluationSampleComparisonClassification?
+    if !baselineFailed, candidateFailed {
+        classification = .regressed
+    } else if baselineFailed, !candidateFailed {
+        classification = .fixed
+    } else if !baselineSample.hasEquivalentEvidence(to: candidateSample) {
+        classification = .changed
+    } else {
+        classification = nil
+    }
+    return classification.map {
+        [
+            EvaluationSampleComparison(
+                classification: $0,
+                key: key,
+                baselineSamples: baseline,
+                candidateSamples: candidate
+            )
+        ]
+    } ?? []
+}
+
+extension EvaluationSample {
+    fileprivate func hasEquivalentEvidence(
+        to other: EvaluationSample
+    ) -> Bool {
+        input == other.input
+            && response == other.response
+            && expected == other.expected
+            && metrics == other.metrics
+            && otherColumns == other.otherColumns
     }
 }
 

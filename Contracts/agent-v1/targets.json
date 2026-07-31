@@ -1,0 +1,41 @@
+{
+  "command": "targets",
+  "count": 1,
+  "manifestPath": "/workspace/.xceval/targets.json",
+  "schemaVersion": "xceval.targets/v1",
+  "targets": [
+    {
+      "argv": [
+        "/usr/bin/xcrun",
+        "swift",
+        "run",
+        "search-evaluate"
+      ],
+      "environment": {
+        "inherit": [
+          "PATH"
+        ],
+        "set": {}
+      },
+      "id": "search-quality",
+      "kind": "command",
+      "outputs": [
+        {
+          "format": "xcevalresult",
+          "minimumCount": 1,
+          "path": ".xceval/results",
+          "role": "evaluation-result"
+        }
+      ],
+      "requirements": [
+        {
+          "capability": "apple.evaluations",
+          "minimumVersion": "27.0"
+        }
+      ],
+      "revision": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "sampleKeyPointer": "/id",
+      "workingDirectory": "/workspace"
+    }
+  ]
+}

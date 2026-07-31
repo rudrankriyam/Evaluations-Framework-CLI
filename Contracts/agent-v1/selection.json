@@ -1,0 +1,26 @@
+{
+  "command": "select",
+  "count": 1,
+  "outputPath": "/workspace/.xceval/selections/failures.json",
+  "sampleKey": "/id",
+  "samples": [
+    {
+      "canonicalKey": "\"sample-1\"",
+      "index": 0,
+      "input": {
+        "id": "sample-1",
+        "prompt": "Recommend a Swift book"
+      },
+      "inputDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "key": "sample-1"
+    }
+  ],
+  "schemaVersion": "xceval.selection/v1",
+  "source": {
+    "artifactID": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "byteDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+    "evaluationID": "BookSearch",
+    "path": "/workspace/BookSearch.xcevalresult",
+    "resultID": "RESULT-1"
+  }
+}

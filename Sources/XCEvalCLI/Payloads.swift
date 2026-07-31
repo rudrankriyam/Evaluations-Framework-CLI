@@ -2,13 +2,17 @@ import Foundation
 import XCEvalCore
 import XCEvalFormat
 
-struct ArtifactIdentity: Encodable {
+struct ArtifactIdentity: Codable, Equatable, Sendable {
     let path: String
+    let artifactID: String
+    let byteDigest: String
     let evaluationID: String?
     let resultID: String?
 
     init(_ artifact: EvaluationArtifact) {
         path = artifact.sourceDescription
+        artifactID = artifact.artifactID
+        byteDigest = artifact.byteDigest
         evaluationID = artifact.evaluationID
         resultID = artifact.resultID
     }
@@ -16,6 +20,8 @@ struct ArtifactIdentity: Encodable {
 
 struct ArtifactListItem: Encodable {
     let path: String
+    let artifactID: String
+    let byteDigest: String
     let evaluationID: String?
     let resultID: String?
     let sampleCount: Int
@@ -25,12 +31,34 @@ struct ArtifactListItem: Encodable {
 
     init(_ artifact: EvaluationArtifact) {
         path = artifact.sourceDescription
+        artifactID = artifact.artifactID
+        byteDigest = artifact.byteDigest
         evaluationID = artifact.evaluationID
         resultID = artifact.resultID
         sampleCount = artifact.samples.count
         summaryMetricCount = artifact.summaries.count
         startTime = artifact.startTime
         durationInMilliseconds = artifact.durationInMilliseconds
+    }
+
+    init?(replaying output: OperationOutputArtifact) {
+        guard
+            let artifactID = output.artifactID,
+            let byteDigest = output.byteDigest ?? output.contentDigest,
+            let sampleCount = output.sampleCount,
+            let summaryMetricCount = output.summaryMetricCount
+        else {
+            return nil
+        }
+        path = output.path
+        self.artifactID = artifactID
+        self.byteDigest = byteDigest
+        evaluationID = output.evaluationID
+        resultID = output.resultID
+        self.sampleCount = sampleCount
+        self.summaryMetricCount = summaryMetricCount
+        startTime = output.startTime
+        durationInMilliseconds = output.durationInMilliseconds
     }
 }
 
@@ -167,16 +195,24 @@ struct GatePayload: Encodable {
     let schemaVersion = EvaluationArtifact.schemaVersion
     let command = "gate"
     let artifact: ArtifactIdentity
+    let baseline: ArtifactIdentity?
     let passed: Bool
     let rules: [EvaluationGateResult]
+    let deltaRules: [EvaluationDeltaGateResult]
 
     init(
         artifact: EvaluationArtifact,
-        results: [EvaluationGateResult]
+        results: [EvaluationGateResult],
+        baseline: EvaluationArtifact? = nil,
+        deltaResults: [EvaluationDeltaGateResult] = []
     ) {
         self.artifact = ArtifactIdentity(artifact)
-        passed = results.allSatisfy(\.passed)
+        self.baseline = baseline.map(ArtifactIdentity.init)
+        passed =
+            results.allSatisfy(\.passed)
+            && deltaResults.allSatisfy(\.passed)
         rules = results
+        deltaRules = deltaResults
     }
 }
 
@@ -196,6 +232,22 @@ struct ComparePayload: Encodable {
     let baseline: ArtifactIdentity
     let candidate: ArtifactIdentity
     let metrics: [EvaluationMetricComparison]
+    let sampleKeyStrategy: EvaluationSampleKeyStrategy?
+    let samples: [EvaluationSampleComparison]?
+
+    init(
+        baseline: ArtifactIdentity,
+        candidate: ArtifactIdentity,
+        metrics: [EvaluationMetricComparison],
+        sampleKeyStrategy: EvaluationSampleKeyStrategy? = nil,
+        samples: [EvaluationSampleComparison]? = nil
+    ) {
+        self.baseline = baseline
+        self.candidate = candidate
+        self.metrics = metrics
+        self.sampleKeyStrategy = sampleKeyStrategy
+        self.samples = samples
+    }
 }
 
 struct ExportPayload: Encodable {
@@ -222,13 +274,50 @@ struct DoctorPayload: Encodable {
 
 struct ProcessPayload: Encodable {
     let status: Int32
+    let terminationReason: ProcessTerminationReason
+    let terminationSignal: Int32?
+    let duration: TimeInterval
+    let processIdentifier: Int32
+    let processGroupIdentifier: Int32?
     let standardOutput: String
     let standardError: String
+    let standardOutputLog: String?
+    let standardErrorLog: String?
+    let standardOutputTruncated: Bool
+    let standardErrorTruncated: Bool
 
     init(_ result: ProcessResult) {
         status = result.status
+        terminationReason = result.terminationReason
+        terminationSignal = result.terminationSignal
+        duration = result.duration
+        processIdentifier = result.processIdentifier
+        processGroupIdentifier = result.processGroupIdentifier
         standardOutput = result.standardOutputString
         standardError = result.standardErrorString
+        standardOutputLog = result.standardOutputLog.url?.path
+        standardErrorLog = result.standardErrorLog.url?.path
+        standardOutputTruncated =
+            result.standardOutputLog.captureTruncated
+            || result.standardOutputLog.fileTruncated
+        standardErrorTruncated =
+            result.standardErrorLog.captureTruncated
+            || result.standardErrorLog.fileTruncated
+    }
+
+    init(replaying outcome: OperationProcessOutcome) {
+        status = outcome.status
+        terminationReason = outcome.terminationReason
+        terminationSignal = outcome.terminationSignal
+        duration = outcome.duration
+        processIdentifier = outcome.processIdentifier
+        processGroupIdentifier = outcome.processGroupIdentifier
+        standardOutput = replayedProcessLog(at: outcome.standardOutputLog)
+        standardError = replayedProcessLog(at: outcome.standardErrorLog)
+        standardOutputLog = outcome.standardOutputLog
+        standardErrorLog = outcome.standardErrorLog
+        standardOutputTruncated = outcome.standardOutputTruncated
+        standardErrorTruncated = outcome.standardErrorTruncated
     }
 }
 
@@ -238,22 +327,71 @@ struct RunPayload: Encodable {
     let producerCommand: [String]
     let workingDirectory: String?
     let resultsPath: String
-    let process: ProcessPayload
+    let resultsPaths: [String]
+    let process: ProcessPayload?
     let artifacts: [ArtifactListItem]
+    let operationReceipt: OperationReceipt?
+    let errorMessage: String?
+    let replayed: Bool
 
     init(
         producerCommand: [String],
         workingDirectory: String?,
-        resultsPath: String,
+        resultsPaths: [String],
         process: ProcessResult,
-        artifacts: [EvaluationArtifact]
+        artifacts: [EvaluationArtifact],
+        operationReceipt: OperationReceipt? = nil,
+        errorMessage: String? = nil
     ) {
         self.producerCommand = producerCommand
         self.workingDirectory = workingDirectory
-        self.resultsPath = resultsPath
+        resultsPath = resultsPaths[0]
+        self.resultsPaths = resultsPaths
         self.process = ProcessPayload(process)
         self.artifacts = artifacts.map(ArtifactListItem.init)
+        self.operationReceipt = operationReceipt
+        self.errorMessage = errorMessage
+        replayed = false
     }
+
+    init(
+        producerCommand: [String],
+        workingDirectory: String?,
+        resultsPaths: [String],
+        process: OperationProcessOutcome?,
+        artifacts: [ArtifactListItem],
+        operationReceipt: OperationReceipt,
+        errorMessage: String?
+    ) {
+        self.producerCommand = producerCommand
+        self.workingDirectory = workingDirectory
+        resultsPath = resultsPaths[0]
+        self.resultsPaths = resultsPaths
+        self.process = process.map(ProcessPayload.init(replaying:))
+        self.artifacts = artifacts
+        self.operationReceipt = operationReceipt
+        self.errorMessage = errorMessage
+        replayed = true
+    }
+}
+
+private func replayedProcessLog(at path: String?) -> String {
+    guard let path else { return "" }
+    let url = URL(fileURLWithPath: path)
+    guard let handle = try? FileHandle(forReadingFrom: url) else {
+        return ""
+    }
+    defer { try? handle.close() }
+    let maximumBytes: UInt64 = 1_048_576
+    guard
+        let end = try? handle.seekToEnd(),
+        (try? handle.seek(toOffset: end > maximumBytes ? end - maximumBytes : 0))
+            != nil,
+        let data = try? handle.readToEnd()
+    else {
+        return ""
+    }
+    return String(data: data, encoding: .utf8) ?? ""
 }
 
 struct TestPayload: Encodable {
@@ -327,4 +465,6 @@ struct InitPayload: Encodable {
     let executableName: String
     let destination: String
     let files: [String]
+    let template: String?
+    let authoringTemplateFile: String?
 }

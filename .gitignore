@@ -7,6 +7,14 @@ Package.resolved
 DerivedData/
 xcuserdata/
 *.xcresult/
+Tests/Fixtures/EvaluationsLab/.derived-data/
+Tests/Fixtures/EvaluationsLab/Derived/
+Tests/Fixtures/EvaluationsLab/EvaluationsLab.xcodeproj/
+Tests/Fixtures/EvaluationsLab/EvaluationsLab.xcworkspace/
+Tests/Fixtures/EvaluationsLab/.cli-output*/
+Tests/Fixtures/EvaluationsLab/.tuist-state/
+Tests/Fixtures/EvaluationsLab/.verification-output/
+Tests/Fixtures/EvaluationsLab/.verification-export/
 
 # Evaluation artifacts
 *.xcevalresult

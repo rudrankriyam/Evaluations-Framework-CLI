@@ -1,0 +1,25 @@
+{
+  "attempt": 1,
+  "endedAt": 30,
+  "errorMessage": "The producer timed out.",
+  "idempotencyKey": "search-quality-001",
+  "inputDigest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+  "operation": "run",
+  "operationID": "00000000-0000-0000-0000-000000000001",
+  "outputs": [],
+  "process": {
+    "duration": 30,
+    "processGroupIdentifier": 42,
+    "processIdentifier": 42,
+    "standardErrorLog": "/workspace/.xceval/operations/logs/stderr.log",
+    "standardErrorTruncated": false,
+    "standardOutputLog": "/workspace/.xceval/operations/logs/stdout.log",
+    "standardOutputTruncated": false,
+    "status": 124,
+    "terminationReason": "timedOut",
+    "terminationSignal": 15
+  },
+  "schemaVersion": "xceval.operation-receipt/v1",
+  "startedAt": 0,
+  "state": "timedOut"
+}

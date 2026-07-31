@@ -26,6 +26,7 @@ jobs:
       - name: Build and test
         run: |
           swift package resolve
+          swift format lint --strict --recursive Sources Tests
           swift build
           swift test
 
@@ -33,6 +34,10 @@ jobs:
         run: |
           XCEVAL_EXPECTED_VERSION="${VERSION}" \
             Tests/Integration/cli-integration.sh .build/debug/xceval
+          Tests/Integration/agent-loop-integration.sh .build/debug/xceval
+
+      - name: Verify Xcode 27 Evaluations lab when available
+        run: Tests/Fixtures/EvaluationsLab/Scripts/verify-harness.sh
 
       - name: Build universal release binary
         run: |
@@ -40,7 +45,10 @@ jobs:
           mkdir -p release
           swift build -c release --arch arm64 --arch x86_64 \
             --product xceval --scratch-path .build-release
-          cp .build-release/apple/Products/Release/xceval \
+          BINARY_DIRECTORY="$(swift build -c release \
+            --arch arm64 --arch x86_64 --product xceval \
+            --scratch-path .build-release --show-bin-path)"
+          cp "${BINARY_DIRECTORY}/xceval" \
             "release/xceval_${VERSION}_macOS_universal"
           chmod +x "release/xceval_${VERSION}_macOS_universal"
 

@@ -270,6 +270,15 @@ struct ConvertCommand: ParsableCommand {
                 "The output already exists. Pass --force to replace it."
             )
         }
+        let currentDirectory = URL(
+            fileURLWithPath: FileManager.default.currentDirectoryPath,
+            isDirectory: true
+        )
+        let inputPaths = path == "-" ? [] : [expandedURL(path)]
+        try validateForcedReplacement(
+            targets: [destination],
+            protecting: [currentDirectory] + inputPaths
+        )
         try FileManager.default.removeItem(at: destination)
     }
 }
@@ -299,12 +308,35 @@ struct GateCommand: ParsableCommand {
     )
     var rule: [String] = []
 
+    @Option(
+        name: .long,
+        help: "Baseline artifact required by --delta-rule."
+    )
+    var baseline: String?
+
+    @Option(
+        name: .long,
+        help: """
+            Repeatable candidate-minus-baseline rule, such as \
+            'Mean of Accuracy>=0'.
+            """
+    )
+    var deltaRule: [String] = []
+
     @OptionGroup var selection: ArtifactSelectionOptions
     @OptionGroup var outputOptions: StandardOutputOptions
 
     mutating func run() throws {
-        guard !rule.isEmpty else {
-            throw ValidationError("Provide at least one --rule expression.")
+        guard !rule.isEmpty || !deltaRule.isEmpty else {
+            throw ValidationError(
+                "Provide at least one --rule or --delta-rule expression."
+            )
+        }
+        if !deltaRule.isEmpty, baseline == nil {
+            throw ValidationError("--delta-rule requires --baseline.")
+        }
+        if baseline != nil, deltaRule.isEmpty {
+            throw ValidationError("--baseline requires --delta-rule.")
         }
         let output = try outputOptions.resolve()
         let artifact = try loadSingleArtifact(
@@ -314,7 +346,24 @@ struct GateCommand: ParsableCommand {
         let results = try rule.map {
             try EvaluationGateRule($0).evaluate(in: artifact)
         }
-        let payload = GatePayload(artifact: artifact, results: results)
+        let baselineArtifact = try baseline.map {
+            try loadSingleArtifact(path: $0)
+        }
+        let deltaResults = try deltaRule.map { expression in
+            guard let baselineArtifact else {
+                preconditionFailure("Validated baseline is exhaustive.")
+            }
+            return try EvaluationDeltaGateRule(expression).evaluate(
+                baseline: baselineArtifact,
+                candidate: artifact
+            )
+        }
+        let payload = GatePayload(
+            artifact: artifact,
+            results: results,
+            baseline: baselineArtifact,
+            deltaResults: deltaResults
+        )
 
         switch output.format {
         case .text:
@@ -325,13 +374,22 @@ struct GateCommand: ParsableCommand {
                         + "(actual \(formattedNumber(result.actual)))"
                 )
             }
+            for result in deltaResults {
+                print(
+                    "\(result.passed ? "PASS" : "FAIL") delta "
+                        + "\(result.expression) "
+                        + "(actual \(formattedNumber(result.delta)))"
+                )
+            }
         case .json:
             try CLIOutput.emit(payload, options: output)
         case .jsonl, .rawJSON:
             preconditionFailure("Validated output format is exhaustive.")
         }
 
-        if results.contains(where: { !$0.passed }) {
+        if results.contains(where: { !$0.passed })
+            || deltaResults.contains(where: { !$0.passed })
+        {
             throw ExitCode.failure
         }
     }

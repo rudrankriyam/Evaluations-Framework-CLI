@@ -61,7 +61,7 @@ struct PipelineCommand: ParsableCommand {
             xcodeOverride: xcode
         )
 
-        try prepareArtifactsDirectory(context.artifactsDirectory)
+        try prepareArtifactsDirectory(context)
         let before = artifactSnapshot(at: context.resultsPath)
         let steps = try runSteps(context)
         if let failed = steps.first(where: { $0.status != 0 }) {
@@ -154,8 +154,9 @@ struct PipelineCommand: ParsableCommand {
         return configuration
     }
 
-    private func prepareArtifactsDirectory(_ url: URL) throws {
+    private func prepareArtifactsDirectory(_ context: PipelineContext) throws {
         let fileManager = FileManager.default
+        let url = context.artifactsDirectory
         if fileManager.fileExists(atPath: url.path) {
             guard force else {
                 throw ValidationError(
@@ -165,6 +166,17 @@ struct PipelineCommand: ParsableCommand {
                     """
                 )
             }
+            let protected =
+                [
+                    context.manifestURL,
+                    context.workingDirectory,
+                    context.resultsPath,
+                    context.baselinePath
+                ].compactMap(\.self)
+            try DestructivePathPolicy(
+                allowedRoot: url.deletingLastPathComponent(),
+                protectedPaths: protected
+            ).validate(targets: [url])
             try fileManager.removeItem(at: url)
         }
         try fileManager.createDirectory(
@@ -317,7 +329,9 @@ struct PipelineCommand: ParsableCommand {
         let failures = context.artifactsDirectory
             .appendingPathComponent("failures.jsonl")
         try writeJSONLines(
-            artifact.samples.filter(\.hasFailure).map {
+            artifact.samples.filter {
+                $0.hasFailure(includingStructuralDifferences: true)
+            }.map {
                 XCEvalSampleLine(
                     evaluationID: artifact.evaluationID,
                     resultID: artifact.resultID,
@@ -459,6 +473,7 @@ private struct ResolvedPipelineStep {
 
 private struct PipelineContext {
     let name: String
+    let manifestURL: URL
     let workingDirectory: URL
     let artifactsDirectory: URL
     let resultsPath: URL
@@ -474,6 +489,7 @@ private struct PipelineContext {
         xcodeOverride: String?
     ) throws {
         let manifestDirectory = manifestURL.deletingLastPathComponent()
+        self.manifestURL = manifestURL.standardizedFileURL
         name = try expandPipelineVariables(
             configuration.name,
             values: variables

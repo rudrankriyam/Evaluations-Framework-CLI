@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import XCEvalCore
 
 struct InitCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
@@ -8,7 +9,8 @@ struct InitCommand: ParsableCommand {
         discussion: """
             The starter includes an editable JSON dataset, deterministic \
             evaluators, aggregate metrics, a Swift Testing attachment, a direct \
-            .xcevalresult producer, explicit gates, and xceval.pipeline.json.
+            .xcevalresult producer, a declared agent target, explicit gates, and \
+            xceval.pipeline.json.
             """
     )
 
@@ -27,23 +29,41 @@ struct InitCommand: ParsableCommand {
     )
     var force = false
 
+    @Option(
+        name: .long,
+        help: """
+            Add a compile-verified authoring template with explicit injected \
+            semantics. The runnable deterministic starter remains unchanged.
+            """
+    )
+    var template: AuthoringTemplateOption?
+
     @OptionGroup var outputOptions: StandardOutputOptions
 
     mutating func run() throws {
         let output = try outputOptions.resolve()
-        let project = try EvaluationStarterProject(name: name, path: path)
+        let project = try EvaluationStarterProject(
+            name: name,
+            path: path,
+            authoringTemplate: template
+        )
         let files = try project.write(force: force)
         let payload = InitPayload(
             name: project.displayName,
             packageName: project.packageName,
             executableName: project.executableName,
             destination: project.destination.path,
-            files: files
+            files: files,
+            template: template?.rawValue,
+            authoringTemplateFile: project.authoringTemplateURL?.path
         )
 
         switch output.format {
         case .text:
             print("Created \(project.packageName) at \(project.destination.path)")
+            if let template, let file = project.authoringTemplateURL {
+                print("Authoring template: \(template.rawValue) at \(file.path)")
+            }
             print()
             print("Run the complete pipeline:")
             print("  cd \(shellQuoted(project.destination.path))")
@@ -71,8 +91,13 @@ private struct EvaluationStarterProject {
     let executableName: String
     let testTarget: String
     let destination: URL
+    let authoringTemplate: AuthoringTemplateOption?
 
-    init(name: String, path: String?) throws {
+    init(
+        name: String,
+        path: String?,
+        authoringTemplate: AuthoringTemplateOption?
+    ) throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw ValidationError("Feature name must not be empty.")
@@ -115,6 +140,12 @@ private struct EvaluationStarterProject {
         executableName = "\(kebabCase(trimmed))-evaluate"
         testTarget = "\(base)EvaluationsTests"
         destination = expandedURL(path ?? packageName)
+        self.authoringTemplate = authoringTemplate
+    }
+
+    var authoringTemplateURL: URL? {
+        guard authoringTemplate != nil else { return nil }
+        return destination.appendingPathComponent(authoringTemplateRelativePath)
     }
 
     func write(force: Bool) throws -> [String] {
@@ -128,10 +159,19 @@ private struct EvaluationStarterProject {
                     """
                 )
             }
+            try validateForcedReplacement(
+                targets: [destination],
+                protecting: [
+                    URL(
+                        fileURLWithPath: fileManager.currentDirectoryPath,
+                        isDirectory: true
+                    )
+                ]
+            )
             try fileManager.removeItem(at: destination)
         }
 
-        let files = generatedFiles()
+        let files = try generatedFiles()
         for (relativePath, contents) in files {
             let url = destination.appendingPathComponent(relativePath)
             try fileManager.createDirectory(
@@ -145,17 +185,35 @@ private struct EvaluationStarterProject {
         }
     }
 
-    private func generatedFiles() -> [String: String] {
-        [
+    private func generatedFiles() throws -> [String: String] {
+        var files = [
             "Package.swift": packageManifest,
             "README.md": readme,
             ".gitignore": gitignore,
+            ".xceval/targets.json": targetManifest,
             "xceval.pipeline.json": pipelineManifest,
             "Sources/\(packageName)/\(evaluationName).swift": evaluationSource,
             "Sources/\(packageName)/Resources/starter-samples.json": dataset,
             "Sources/\(executableTarget)/main.swift": executableSource,
             "Tests/\(testTarget)/\(evaluationName)Tests.swift": testSource
         ]
+        if let authoringTemplate {
+            let recipe = EvaluationAuthoringRecipeCatalog.recipe(
+                for: authoringTemplate.recipeKind
+            )
+            files[authoringTemplateRelativePath] = try recipe.template.render(
+                typeName: authoringTemplateTypeName
+            )
+        }
+        return files
+    }
+
+    private var authoringTemplateTypeName: String {
+        "\(evaluationName)Authoring"
+    }
+
+    private var authoringTemplateRelativePath: String {
+        "Sources/\(packageName)/\(authoringTemplateTypeName).swift"
     }
 
     private var packageManifest: String {
@@ -357,8 +415,8 @@ private struct EvaluationStarterProject {
                     }
                     aggregator.group("Distribution") { group in
                         group.computeMean(of: responseLength)
-                        group.computeVariance(of: responseLength)
-                        group.computeStandardDeviation(of: responseLength)
+                        group.computeMinimum(of: responseLength)
+                        group.computeMaximum(of: responseLength)
                     }
                 }
             }
@@ -397,7 +455,17 @@ private struct EvaluationStarterProject {
                 static func main() async {
                     do {
                         let output = try outputDirectory()
-                        let evaluation = __EVALUATION__()
+                        let selectedDataset = try selectedDataset()
+                        defer {
+                            if selectedDataset.isTemporary {
+                                try? FileManager.default.removeItem(
+                                    at: selectedDataset.url
+                                )
+                            }
+                        }
+                        let evaluation = __EVALUATION__(
+                            datasetURL: selectedDataset.url
+                        )
                         let result = try await evaluation.run(
                             info: [
                                 "Feature": "__DISPLAY_NAME__",
@@ -440,13 +508,199 @@ private struct EvaluationStarterProject {
                             (arguments[1] as NSString).expandingTildeInPath
                     ).standardizedFileURL
                 }
+
+                private static func selectedDataset() throws -> (
+                    url: URL,
+                    isTemporary: Bool
+                ) {
+                    guard
+                        let selectionPath = ProcessInfo.processInfo.environment[
+                            "XCEVAL_SELECTION_PATH"
+                        ]
+                    else {
+                        return (StarterDataset.url, false)
+                    }
+                    let selectionURL = URL(
+                        fileURLWithPath:
+                            (selectionPath as NSString).expandingTildeInPath
+                    ).standardizedFileURL
+                    let selection = try JSONDecoder().decode(
+                        SelectionDocument.self,
+                        from: Data(contentsOf: selectionURL)
+                    )
+                    let records = try JSONDecoder().decode(
+                        [StarterRecord].self,
+                        from: Data(contentsOf: StarterDataset.url)
+                    )
+                    var selectedIndices = Set<Int>()
+                    var missing: [String] = []
+                    var ambiguous: [String] = []
+                    for sample in selection.samples {
+                        let matches = sample.matchingIndices(in: records)
+                        switch matches.count {
+                        case 0:
+                            missing.append(sample.key)
+                        case 1:
+                            if !selectedIndices.insert(matches[0]).inserted {
+                                ambiguous.append(sample.key)
+                            }
+                        default:
+                            ambiguous.append(sample.key)
+                        }
+                    }
+                    guard missing.isEmpty else {
+                        throw RunnerError.selectionKeysNotFound(
+                            Array(Set(missing)).sorted()
+                        )
+                    }
+                    guard ambiguous.isEmpty else {
+                        throw RunnerError.selectionKeysAmbiguous(
+                            Array(Set(ambiguous)).sorted()
+                        )
+                    }
+                    let filtered = records.indices.compactMap {
+                        selectedIndices.contains($0) ? records[$0] : nil
+                    }
+                    let temporaryURL = FileManager.default.temporaryDirectory
+                        .appendingPathComponent(
+                            "xceval-selection-\(UUID().uuidString).json"
+                        )
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = [
+                        .prettyPrinted,
+                        .sortedKeys,
+                        .withoutEscapingSlashes
+                    ]
+                    try encoder.encode(filtered).write(
+                        to: temporaryURL,
+                        options: .atomic
+                    )
+                    return (temporaryURL, true)
+                }
+            }
+
+            private struct SelectionDocument: Decodable {
+                let samples: [SelectedSample]
+            }
+
+            private struct SelectedSample: Decodable {
+                let key: String
+                let canonicalKey: String?
+                let input: SelectionInput?
+
+                func matchingIndices(
+                    in records: [StarterRecord]
+                ) -> [Int] {
+                    records.indices.filter {
+                        matches(records[$0])
+                    }
+                }
+
+                private func matches(_ record: StarterRecord) -> Bool {
+                    if let exactInput = input?.exactStarterInput {
+                        return record.input == exactInput
+                    }
+                    if let selectedPrompt = input?.prompt {
+                        return record.input.prompt == selectedPrompt
+                    }
+                    if key == record.input.prompt {
+                        return true
+                    }
+                    guard
+                        let canonicalKey,
+                        let data = canonicalKey.data(using: .utf8),
+                        let decoded = try? JSONDecoder().decode(
+                            String.self,
+                            from: data
+                        )
+                    else {
+                        return false
+                    }
+                    return decoded == record.input.prompt
+                }
+            }
+
+            private struct SelectionInput: Decodable {
+                let instructions: String?
+                let prompt: String?
+
+                var exactStarterInput: StarterInput? {
+                    guard let instructions, let prompt else { return nil }
+                    return StarterInput(
+                        instructions: instructions,
+                        prompt: prompt
+                    )
+                }
+
+                private enum CodingKeys: String, CodingKey {
+                    case input
+                    case record
+                    case instructions
+                    case prompt
+                    case promptDescription
+                }
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.container(
+                        keyedBy: CodingKeys.self
+                    )
+                    let nestedInput = try? container.decode(
+                        StarterInput.self,
+                        forKey: .input
+                    )
+                    let nestedRecord = try? container.decode(
+                        StarterInput.self,
+                        forKey: .record
+                    )
+                    let nested = nestedInput ?? nestedRecord
+                    instructions =
+                        nested?.instructions
+                        ?? (try? container.decodeIfPresent(
+                            String.self,
+                            forKey: .instructions
+                        ))
+                    prompt =
+                        nested?.prompt
+                        ?? (try? container.decodeIfPresent(
+                            String.self,
+                            forKey: .prompt
+                        ))
+                        ?? (try? container.decodeIfPresent(
+                            String.self,
+                            forKey: .promptDescription
+                        ))
+                }
+            }
+
+            private struct StarterRecord: Codable, Equatable {
+                let input: StarterInput
+                let output: StarterOutput
+            }
+
+            private struct StarterInput: Codable, Equatable {
+                let instructions: String
+                let prompt: String
+            }
+
+            private struct StarterOutput: Codable, Equatable {
+                let value: String
             }
 
             private enum RunnerError: LocalizedError {
                 case invalidArguments
+                case selectionKeysNotFound([String])
+                case selectionKeysAmbiguous([String])
 
                 var errorDescription: String? {
-                    "Usage: __EXECUTABLE_NAME__ [--output <directory>]"
+                    switch self {
+                    case .invalidArguments:
+                        "Usage: __EXECUTABLE_NAME__ [--output <directory>]"
+                    case .selectionKeysNotFound(let keys):
+                        "Selection keys were not found: \(keys.joined(separator: ", "))"
+                    case .selectionKeysAmbiguous(let keys):
+                        "Selection keys matched multiple records: "
+                            + keys.joined(separator: ", ")
+                    }
                 }
             }
             """#
@@ -558,8 +812,53 @@ private struct EvaluationStarterProject {
         )
     }
 
-    private var readme: String {
+    private var targetManifest: String {
         template(
+            #"""
+            {
+              "schemaVersion": "xceval.targets/v1",
+              "targets": [
+                {
+                  "id": "__EXECUTABLE_NAME__",
+                  "kind": "command",
+                  "workingDirectory": "..",
+                  "argv": [
+                    "/usr/bin/xcrun",
+                    "swift",
+                    "run",
+                    "--quiet",
+                    "__EXECUTABLE_NAME__",
+                    "--output",
+                    ".xceval/results"
+                  ],
+                  "environment": {
+                    "inherit": ["HOME", "PATH", "TMPDIR"],
+                    "set": {}
+                  },
+                  "outputs": [
+                    {
+                      "role": "evaluation-result",
+                      "path": ".xceval/results",
+                      "format": "xcevalresult",
+                      "minimumCount": 1
+                    }
+                  ],
+                  "requirements": [
+                    {
+                      "capability": "apple.evaluations",
+                      "minimumVersion": "27.0"
+                    }
+                  ],
+                  "sampleKeyPointer": "/input/prompt"
+                }
+              ]
+            }
+            """#
+        )
+    }
+
+    private var readme: String {
+        let base = template(
             #"""
             # __PACKAGE__
 
@@ -583,6 +882,18 @@ private struct EvaluationStarterProject {
             6. Applies explicit aggregate gates.
 
             Results are under `.xceval/pipeline`.
+
+            ## Run as a declared agent target
+
+            ```bash
+            xceval targets
+            xceval run __EXECUTABLE_NAME__ \
+              --operation-id first-run --output json
+            ```
+
+            `run --selection <manifest>` sets `XCEVAL_SELECTION_PATH`; this
+            starter producer then reruns records by the selected sample input
+            identity, with prompt-key compatibility for older manifests.
 
             ## Run the Swift Testing attachment
 
@@ -613,13 +924,42 @@ private struct EvaluationStarterProject {
             inspection visible on the first run.
             """#
         )
+        guard let authoringTemplate else { return base }
+        let recipe = EvaluationAuthoringRecipeCatalog.recipe(
+            for: authoringTemplate.recipeKind
+        )
+        let inputs = recipe.semanticInputs
+            .map { "- `\($0.id)`: \($0.description)" }
+            .joined(separator: "\n")
+        return base
+            + template(
+                #"""
+
+                ## Explicit authoring template
+
+                `__EVALUATION__Authoring.swift` contains the compile-verified
+                `__AUTHORING_TEMPLATE__` recipe. It is additive: the runnable
+                deterministic starter remains the pipeline target until you
+                explicitly integrate the injected behavior.
+
+                The template requires product-owned inputs:
+
+                __AUTHORING_INPUTS__
+                """#
+            )
+            .replacingOccurrences(
+                of: "__AUTHORING_TEMPLATE__",
+                with: authoringTemplate.rawValue
+            )
+            .replacingOccurrences(of: "__AUTHORING_INPUTS__", with: inputs)
     }
 
     private var gitignore: String {
         """
         .build/
         .swiftpm/
-        .xceval/
+        .xceval/*
+        !.xceval/targets.json
         *.xcresult
         *.xcevalresult
         *.xcevalresults.jsonl

@@ -18,13 +18,55 @@ struct CompareCommand: ParsableCommand {
     @Argument(help: "Candidate .xcevalresult path.")
     var candidatePath: String
 
+    @Flag(
+        name: .long,
+        help: "Include matched per-sample regressions and changes."
+    )
+    var includeSamples = false
+
+    @Option(
+        name: .long,
+        help: """
+            RFC 6901 JSON Pointer inside each normalized sample input used as \
+            cross-run identity. Without this option, --include-samples uses a \
+            canonical digest of the complete input.
+            """
+    )
+    var sampleKey: String?
+
+    @Flag(
+        name: .long,
+        help: "Treat Subject-versus-Expected structural differences as failures."
+    )
+    var includeStructuralDifferences = false
+
     @OptionGroup var outputOptions: StandardOutputOptions
 
     mutating func run() throws {
+        if sampleKey != nil, !includeSamples {
+            throw ValidationError("--sample-key requires --include-samples.")
+        }
+        if includeStructuralDifferences, !includeSamples {
+            throw ValidationError(
+                "--include-structural-differences requires --include-samples."
+            )
+        }
         let output = try outputOptions.resolve()
         let baseline = try loadSingleArtifact(path: baselinePath)
         let candidate = try loadSingleArtifact(path: candidatePath)
         let comparisons = baseline.comparisons(with: candidate)
+        let keyStrategy: EvaluationSampleKeyStrategy? =
+            includeSamples
+            ? sampleKey.map(EvaluationSampleKeyStrategy.jsonPointer)
+                ?? .canonicalInputDigest
+            : nil
+        let sampleComparisons = keyStrategy.map {
+            baseline.sampleComparisons(
+                with: candidate,
+                keyStrategy: $0,
+                includingStructuralDifferences: includeStructuralDifferences
+            )
+        }
 
         switch output.format {
         case .text:
@@ -33,12 +75,17 @@ struct CompareCommand: ParsableCommand {
                 baselinePath: baseline.sourceURL.path,
                 candidatePath: candidate.sourceURL.path
             )
+            if let sampleComparisons {
+                printSampleComparisons(sampleComparisons)
+            }
         case .json:
             try CLIOutput.emit(
                 ComparePayload(
                     baseline: ArtifactIdentity(baseline),
                     candidate: ArtifactIdentity(candidate),
-                    metrics: comparisons
+                    metrics: comparisons,
+                    sampleKeyStrategy: keyStrategy,
+                    samples: sampleComparisons
                 ),
                 options: output
             )
@@ -73,6 +120,21 @@ struct CompareCommand: ParsableCommand {
                 "\(label): \(baselineValue) -> "
                     + "\(candidateValue) (delta \(delta))"
             )
+        }
+    }
+
+    private func printSampleComparisons(
+        _ comparisons: [EvaluationSampleComparison]
+    ) {
+        print()
+        print("Sample changes: \(comparisons.count)")
+        for classification in EvaluationSampleComparisonClassification.allCases {
+            let count = comparisons.count {
+                $0.classification == classification
+            }
+            if count > 0 {
+                print("- \(classification.rawValue): \(count)")
+            }
         }
     }
 }
