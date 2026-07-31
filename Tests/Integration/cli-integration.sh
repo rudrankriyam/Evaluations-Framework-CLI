@@ -664,6 +664,13 @@ test -f "$INIT_DIRECTORY/xceval.pipeline.json"
 test -f "$INIT_DIRECTORY/.xceval/targets.json"
 test -f "$INIT_DIRECTORY/Sources/GeneratedFeatureEvaluations/GeneratedFeatureEvaluation.swift"
 mark "generated starter files"
+grep -Fq \
+    'case selectionKeysAmbiguous([String])' \
+    "$INIT_DIRECTORY/Sources/GeneratedFeatureEvaluateCLI/main.swift"
+grep -Fq \
+    'switch matches.count' \
+    "$INIT_DIRECTORY/Sources/GeneratedFeatureEvaluateCLI/main.swift"
+mark "generated starter fails closed on ambiguous selections"
 "$BIN" targets "$INIT_DIRECTORY/.xceval/targets.json" \
     --output json >"$WORK/init-targets.json"
 assert_json "$WORK/init-targets.json" \

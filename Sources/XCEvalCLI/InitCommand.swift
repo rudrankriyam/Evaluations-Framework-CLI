@@ -534,19 +534,28 @@ private struct EvaluationStarterProject {
                     )
                     var selectedIndices = Set<Int>()
                     var missing: [String] = []
+                    var ambiguous: [String] = []
                     for sample in selection.samples {
-                        let matches = records.indices.filter {
-                            sample.matches(records[$0])
-                        }
-                        if matches.isEmpty {
+                        let matches = sample.matchingIndices(in: records)
+                        switch matches.count {
+                        case 0:
                             missing.append(sample.key)
-                        } else {
-                            selectedIndices.formUnion(matches)
+                        case 1:
+                            if !selectedIndices.insert(matches[0]).inserted {
+                                ambiguous.append(sample.key)
+                            }
+                        default:
+                            ambiguous.append(sample.key)
                         }
                     }
                     guard missing.isEmpty else {
                         throw RunnerError.selectionKeysNotFound(
-                            missing.sorted()
+                            Array(Set(missing)).sorted()
+                        )
+                    }
+                    guard ambiguous.isEmpty else {
+                        throw RunnerError.selectionKeysAmbiguous(
+                            Array(Set(ambiguous)).sorted()
                         )
                     }
                     let filtered = records.indices.compactMap {
@@ -579,7 +588,15 @@ private struct EvaluationStarterProject {
                 let canonicalKey: String?
                 let input: SelectionInput?
 
-                func matches(_ record: StarterRecord) -> Bool {
+                func matchingIndices(
+                    in records: [StarterRecord]
+                ) -> [Int] {
+                    records.indices.filter {
+                        matches(records[$0])
+                    }
+                }
+
+                private func matches(_ record: StarterRecord) -> Bool {
                     if let exactInput = input?.exactStarterInput {
                         return record.input == exactInput
                     }
@@ -672,6 +689,7 @@ private struct EvaluationStarterProject {
             private enum RunnerError: LocalizedError {
                 case invalidArguments
                 case selectionKeysNotFound([String])
+                case selectionKeysAmbiguous([String])
 
                 var errorDescription: String? {
                     switch self {
@@ -679,6 +697,9 @@ private struct EvaluationStarterProject {
                         "Usage: __EXECUTABLE_NAME__ [--output <directory>]"
                     case .selectionKeysNotFound(let keys):
                         "Selection keys were not found: \(keys.joined(separator: ", "))"
+                    case .selectionKeysAmbiguous(let keys):
+                        "Selection keys matched multiple records: "
+                            + keys.joined(separator: ", ")
                     }
                 }
             }
