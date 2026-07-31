@@ -1,0 +1,42 @@
+{
+  "command": "samples",
+  "evaluationID": "BookSearch",
+  "path": "BookSearch.xcevalresult",
+  "resultID": "RESULT-1",
+  "sampleCount": 1,
+  "samples": [
+    {
+      "expected": {
+        "value": 5
+      },
+      "index": 0,
+      "input": {
+        "record": {
+          "id": "book-1",
+          "prompt": "Recommend a Swift book"
+        }
+      },
+      "inputRaw": "{\"record\":{\"id\":\"book-1\",\"prompt\":\"Recommend a Swift book\"}}",
+      "metrics": [
+        {
+          "details": {
+            "evaluatorKind": "modelJudge",
+            "kind": "score",
+            "rationale": "Directly relevant",
+            "value": 5
+          },
+          "evaluatorKind": "modelJudge",
+          "kind": "score",
+          "name": "Relevance",
+          "rationale": "Directly relevant",
+          "value": 5
+        }
+      ],
+      "otherColumns": {},
+      "response": {
+        "value": "The Swift Programming Language"
+      }
+    }
+  ],
+  "schemaVersion": "xceval/v1"
+}

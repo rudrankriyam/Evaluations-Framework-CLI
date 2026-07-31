@@ -76,6 +76,53 @@ brew tap rudrankriyam/tap
 brew install xceval
 ```
 
+## Swift Library Products
+
+The package publishes two library products alongside the executable:
+
+- `XCEvalFormat` is the preferred interoperability surface. It contains public
+  models and decoders for normalized `xceval/v1` inspect, samples, and JSONL
+  output.
+- `XCEvalCore` exposes the existing artifact, analysis, pipeline, Xcode, and
+  process utilities. Its API is experimental while `xceval` remains pre-1.0.
+
+Add the package and select only the product your target needs:
+
+```swift
+.package(
+    url: "https://github.com/rudrankriyam/Evaluations-Framework-CLI.git",
+    from: "0.3.0"
+)
+```
+
+Decode normalized command output without parsing Apple's persisted schema:
+
+```swift
+import Foundation
+import XCEvalFormat
+
+let data = try Data(contentsOf: outputURL)
+let document = try XCEvalDocumentDecoder.decode(data)
+
+switch document {
+case .inspect(let output):
+    print(output.artifact.samples?.count ?? 0)
+case .samples(let output):
+    print(output.samples.count)
+}
+```
+
+Golden examples and compatibility rules live under
+[`Contracts/xceval-v1`](Contracts/xceval-v1). Within `xceval/v1`, consumers
+must tolerate additive fields. Breaking field or semantic changes require a
+new schema version.
+
+[`JudgeCalibrationKit`](https://github.com/Dave861/JudgeCalibrationKit)
+independently provides judge-human agreement statistics and calibration gates.
+It consumes normalized `xceval/v1` output while keeping calibration policy and
+human labels project-owned. `xceval` does not copy, invoke, or depend on that
+library.
+
 ## First Commands
 
 ```bash

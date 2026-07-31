@@ -13,7 +13,7 @@ struct XCEvalRootCommand: AsyncParsableCommand {
             emits stable machine-readable output for scripts, CI, and developer \
             tools.
             """,
-        version: "0.2.1",
+        version: "0.3.0",
         subcommands: [
             InitCommand.self,
             CapabilitiesCommand.self,

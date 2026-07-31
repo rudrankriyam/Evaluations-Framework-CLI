@@ -1,5 +1,6 @@
 import ArgumentParser
 import XCEvalCore
+import XCEvalFormat
 
 struct InspectCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
@@ -33,8 +34,8 @@ struct InspectCommand: ParsableCommand {
             printArtifactSummary(artifact)
         case .json:
             try CLIOutput.emit(
-                InspectPayload(
-                    artifact: ArtifactPayload(
+                XCEvalInspectDocument(
+                    artifact: XCEvalArtifactDocument(
                         artifact: artifact,
                         includeSamples: !summaryOnly
                     )
@@ -134,11 +135,10 @@ struct SamplesCommand: ParsableCommand {
             printSamples(samples)
         case .json:
             try CLIOutput.emit(
-                SamplesPayload(
+                XCEvalSamplesDocument(
                     path: artifact.sourceDescription,
                     evaluationID: artifact.evaluationID,
                     resultID: artifact.resultID,
-                    sampleCount: samples.count,
                     samples: samples
                 ),
                 options: output
@@ -146,7 +146,7 @@ struct SamplesCommand: ParsableCommand {
         case .jsonl:
             try CLIOutput.emitJSONLines(
                 samples.map {
-                    SampleLinePayload(
+                    XCEvalSampleLine(
                         evaluationID: artifact.evaluationID,
                         resultID: artifact.resultID,
                         sample: $0

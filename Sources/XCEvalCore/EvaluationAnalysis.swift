@@ -1,4 +1,5 @@
 import Foundation
+import XCEvalFormat
 
 public struct EvaluationMetricProfile: Codable, Equatable, Sendable {
     public let name: String

@@ -1,4 +1,5 @@
 import Foundation
+import XCEvalFormat
 
 public enum EvaluationArtifactLoader {
     public static func load(from url: URL) throws -> [EvaluationArtifact] {

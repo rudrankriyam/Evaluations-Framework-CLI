@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import XCEvalCore
+import XCEvalFormat
 
 struct MetricsCommand: ParsableCommand {
     static let configuration = CommandConfiguration(

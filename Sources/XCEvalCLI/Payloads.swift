@@ -1,58 +1,6 @@
 import Foundation
 import XCEvalCore
-
-struct ArtifactPayload: Encodable {
-    let path: String
-    let evaluationID: String?
-    let resultID: String?
-    let startTime: String?
-    let endTime: String?
-    let durationInMilliseconds: Double?
-    let sampleCount: Int
-    let info: [String: JSONValue]
-    let reportMetadata: [String: JSONValue]
-    let otherFields: [String: JSONValue]
-    let summary: [EvaluationSummaryMetric]
-    let samples: [EvaluationSample]?
-
-    init(artifact: EvaluationArtifact, includeSamples: Bool) {
-        path = artifact.sourceDescription
-        evaluationID = artifact.evaluationID
-        resultID = artifact.resultID
-        startTime = artifact.startTime
-        endTime = artifact.endTime
-        durationInMilliseconds = artifact.durationInMilliseconds
-        sampleCount = artifact.samples.count
-        info = artifact.evaluationInfo
-        reportMetadata = artifact.reportMetadata
-        otherFields = artifact.otherTopLevelFields
-        summary = artifact.summaries
-        samples = includeSamples ? artifact.samples : nil
-    }
-}
-
-struct InspectPayload: Encodable {
-    let schemaVersion = EvaluationArtifact.schemaVersion
-    let command = "inspect"
-    let artifact: ArtifactPayload
-}
-
-struct SamplesPayload: Encodable {
-    let schemaVersion = EvaluationArtifact.schemaVersion
-    let command = "samples"
-    let path: String
-    let evaluationID: String?
-    let resultID: String?
-    let sampleCount: Int
-    let samples: [EvaluationSample]
-}
-
-struct SampleLinePayload: Encodable {
-    let schemaVersion = EvaluationArtifact.schemaVersion
-    let evaluationID: String?
-    let resultID: String?
-    let sample: EvaluationSample
-}
+import XCEvalFormat
 
 struct ArtifactIdentity: Encodable {
     let path: String
@@ -171,7 +119,7 @@ struct EvaluationSampleReportPayload: Encodable {
 struct ReportPayload: Encodable {
     let schemaVersion = EvaluationArtifact.schemaVersion
     let command = "report"
-    let artifact: ArtifactPayload
+    let artifact: XCEvalArtifactDocument
     let profiles: [EvaluationMetricProfile]
     let samples: [EvaluationSampleReportPayload]
     let baseline: ArtifactIdentity?
@@ -181,7 +129,7 @@ struct ReportPayload: Encodable {
         artifact: EvaluationArtifact,
         baseline: EvaluationArtifact? = nil
     ) {
-        self.artifact = ArtifactPayload(
+        self.artifact = XCEvalArtifactDocument(
             artifact: artifact,
             includeSamples: false
         )

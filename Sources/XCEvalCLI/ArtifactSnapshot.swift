@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import XCEvalCore
+import XCEvalFormat
 
 struct TestExportOutcome {
     let result: XcodeEvaluationExport?

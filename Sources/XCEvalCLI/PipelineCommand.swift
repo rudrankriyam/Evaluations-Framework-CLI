@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import XCEvalCore
+import XCEvalFormat
 
 struct PipelineCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
@@ -287,8 +288,8 @@ struct PipelineCommand: ParsableCommand {
         let inspect = context.artifactsDirectory
             .appendingPathComponent("inspect.json")
         try writeJSON(
-            InspectPayload(
-                artifact: ArtifactPayload(
+            XCEvalInspectDocument(
+                artifact: XCEvalArtifactDocument(
                     artifact: artifact,
                     includeSamples: true
                 )
@@ -317,7 +318,7 @@ struct PipelineCommand: ParsableCommand {
             .appendingPathComponent("failures.jsonl")
         try writeJSONLines(
             artifact.samples.filter(\.hasFailure).map {
-                SampleLinePayload(
+                XCEvalSampleLine(
                     evaluationID: artifact.evaluationID,
                     resultID: artifact.resultID,
                     sample: $0

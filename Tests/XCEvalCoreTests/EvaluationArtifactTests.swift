@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import XCEvalFormat
 
 @testable import XCEvalCore
 
