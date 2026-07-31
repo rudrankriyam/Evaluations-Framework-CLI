@@ -359,6 +359,12 @@ test_stable_errors_and_contracts() {
         'd["schemaVersion"] == "xceval.error/v1" and d["command"] == "list" and d["error"]["code"] == "input_not_found" and isinstance(d["error"]["retryable"], bool) and isinstance(d["error"]["details"], dict)' \
         "machine errors have stable code, retryability, and details"
 
+    capture "$BIN" list "$WORK/missing-implicit.xcevalresult"
+    require_failure "piped default machine error"
+    assert_json "$LAST_STDOUT" \
+        'd["schemaVersion"] == "xceval.error/v1" and d["command"] == "list" and d["error"]["code"] == "input_not_found" and d["error"]["retryable"] is False' \
+        "piped failures default to the same JSON contract as successes"
+
     capture "$BIN" targets "$WORK/missing-targets.json" --output json
     require_failure "missing targets manifest machine error"
     assert_json "$LAST_STDOUT" \

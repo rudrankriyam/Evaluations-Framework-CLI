@@ -41,6 +41,8 @@ coding agents while keeping evaluation meaning in project-owned Swift.
 - Distinguish missing, pending, conflicting, invalid, and unavailable operation
   state in structured errors; reject duplicate selected-sample keys before
   writing a manifest.
+- Emit the same structured error envelope when JSON is selected implicitly by
+  piped output as when `--output json` is explicit.
 - Reject broad or protected destructive paths before producer execution.
 - Preserve structural sample failures alongside metric failures.
 - Add a disposable Tuist project that compiles directly against Xcode 27 Beta

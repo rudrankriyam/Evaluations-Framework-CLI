@@ -369,9 +369,10 @@ this README.
 
 Artifact analysis commands use the additive envelope `xceval/v1`. Target,
 selection, receipt, API, and dataset lifecycle documents use purpose-specific
-versioned schemas. Explicit `--output json` failures use `xceval.error/v1` with
-a stable code, retryability flag, message, and structured details. All current
-documents are publicly decodable through `XCEvalFormat`.
+versioned schemas. Failures use `xceval.error/v1` whenever output resolves to
+JSON, whether through explicit `--output json` or the non-terminal default,
+with a stable code, retryability flag, message, and structured details. All
+current documents are publicly decodable through `XCEvalFormat`.
 
 Operation-state failures distinguish a missing receipt
 (`operation_not_found`), a live claim whose receipt is not visible yet

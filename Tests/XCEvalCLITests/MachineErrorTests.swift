@@ -3,6 +3,43 @@ import XCEvalCore
 
 @testable import XCEvalCLI
 
+@Test("Machine errors follow explicit and implicit JSON output resolution")
+func machineErrorsFollowResolvedOutput() {
+    #expect(shouldEmitMachineJSON(["list"], stdoutIsTerminal: false))
+    #expect(!shouldEmitMachineJSON(["list"], stdoutIsTerminal: true))
+    #expect(
+        shouldEmitMachineJSON(
+            ["list", "--output", "json"],
+            stdoutIsTerminal: true
+        )
+    )
+    #expect(
+        !shouldEmitMachineJSON(
+            ["list", "--output=text"],
+            stdoutIsTerminal: false
+        )
+    )
+    #expect(
+        shouldEmitMachineJSON(
+            ["run", "--output", "json", "--", "tool", "--output=text"],
+            stdoutIsTerminal: true
+        )
+    )
+    #expect(!shouldEmitMachineJSON(["--version"], stdoutIsTerminal: false))
+    #expect(
+        !shouldEmitMachineJSON(
+            ["list", "--help"],
+            stdoutIsTerminal: false
+        )
+    )
+    #expect(
+        shouldEmitMachineJSON(
+            ["run", "--", "tool", "--help"],
+            stdoutIsTerminal: false
+        )
+    )
+}
+
 @Test("A pending operation claim is a retryable in-progress signal")
 func pendingOperationClaimIsRetryable() {
     let document = machineErrorDocument(

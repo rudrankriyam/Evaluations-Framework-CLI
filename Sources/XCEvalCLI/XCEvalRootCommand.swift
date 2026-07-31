@@ -60,7 +60,7 @@ struct XCEvalRootCommand: AsyncParsableCommand {
         } catch let cleanExit as CleanExit {
             exit(withError: cleanExit)
         } catch {
-            if argumentsContainMachineJSON(arguments) {
+            if shouldEmitMachineJSON(arguments) {
                 let document = machineErrorDocument(
                     error: error,
                     arguments: arguments
@@ -107,13 +107,35 @@ struct XCEvalRootCommand: AsyncParsableCommand {
     }
 }
 
-private func argumentsContainMachineJSON(_ arguments: [String]) -> Bool {
-    for index in arguments.indices
-    where arguments[index] == "--output"
-        && arguments.indices.contains(index + 1)
-        && arguments[index + 1] == "json"
-    {
-        return true
+func shouldEmitMachineJSON(
+    _ arguments: [String],
+    stdoutIsTerminal: Bool = isatty(fileno(stdout)) == 1
+) -> Bool {
+    let optionArguments = Array(arguments.prefix { $0 != "--" })
+    let requestsArgumentParserOutput =
+        optionArguments.first == "help"
+        || optionArguments.contains("--help")
+        || optionArguments.contains("-h")
+        || optionArguments.contains("--version")
+        || optionArguments.contains("--experimental-dump-help")
+        || optionArguments.contains("--generate-completion-script")
+    if requestsArgumentParserOutput {
+        return false
     }
-    return arguments.contains("--output=json")
+    var explicitOutput: String?
+    for index in optionArguments.indices {
+        if optionArguments[index] == "--output",
+            optionArguments.indices.contains(index + 1)
+        {
+            explicitOutput = optionArguments[index + 1]
+        } else if optionArguments[index].hasPrefix("--output=") {
+            explicitOutput = String(
+                optionArguments[index].dropFirst("--output=".count)
+            )
+        }
+    }
+    if let explicitOutput {
+        return explicitOutput == "json"
+    }
+    return !stdoutIsTerminal
 }
