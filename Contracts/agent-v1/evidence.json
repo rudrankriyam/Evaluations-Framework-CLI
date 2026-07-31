@@ -1,0 +1,57 @@
+{
+  "aggregateDeltas": [],
+  "artifact": {
+    "artifactID": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "byteDigest": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+    "evaluationID": "BookSearch",
+    "path": "/workspace/Candidate.xcevalresult",
+    "resultID": "CANDIDATE-1"
+  },
+  "baseline": null,
+  "command": "evidence",
+  "failingSamples": [
+    {
+      "expected": "The Swift Programming Language",
+      "failedMetrics": [
+        "Exact Match"
+      ],
+      "index": 0,
+      "input": {
+        "id": "sample-1",
+        "prompt": "Recommend a Swift book"
+      },
+      "key": {
+        "strategy": {
+          "jsonPointer": {
+            "_0": "/id"
+          }
+        },
+        "value": "\"sample-1\""
+      },
+      "metrics": [
+        {
+          "details": {
+            "kind": "fail",
+            "rationale": "The title did not match."
+          },
+          "kind": "fail",
+          "name": "Exact Match",
+          "rationale": "The title did not match."
+        }
+      ],
+      "otherColumns": {},
+      "prompt": "Recommend a Swift book",
+      "response": "A different title",
+      "structuralDifferences": []
+    }
+  ],
+  "includesStructuralDifferences": false,
+  "regressionsOnly": false,
+  "sampleDeltas": [],
+  "sampleKeyStrategy": {
+    "jsonPointer": {
+      "_0": "/id"
+    }
+  },
+  "schemaVersion": "xceval/v1"
+}

@@ -213,6 +213,229 @@ func extractsDataset() throws {
     #expect(artifact.datasetPairs[1].response == "goodbye")
 }
 
+@Test("Prompt extraction supports record-shaped inputs")
+func extractsPromptFromRecordInput() throws {
+    let artifact = try EvaluationArtifact(
+        data: Data(
+            #"""
+            {
+              "results": [
+                {
+                  "Input": {
+                    "record": {
+                      "id": "book-1",
+                      "prompt": "Recommend a Swift book"
+                    }
+                  }
+                }
+              ]
+            }
+            """#.utf8
+        )
+    )
+
+    #expect(artifact.samples.first?.prompt == "Recommend a Swift book")
+    #expect(
+        artifact.datasetRecords.first?.prompt
+            == "Recommend a Swift book"
+    )
+}
+
+@Test("Structural differences can be selected as sample failures")
+func selectsStructuralDifferencesAsFailures() throws {
+    let artifact = try EvaluationArtifact(
+        data: Data(subjectExpectedFixture.utf8)
+    )
+    let sample = try #require(artifact.samples.first)
+
+    #expect(!sample.hasFailure)
+    #expect(!sample.hasFailure(includingStructuralDifferences: false))
+    #expect(sample.hasFailure(includingStructuralDifferences: true))
+}
+
+@Test("Stable sample keys support JSON Pointer and canonical input digests")
+func extractsStableSampleKeys() throws {
+    let first = EvaluationSample(
+        index: 0,
+        input: .object([
+            "record": .object([
+                "a/b~c": .string("book-1")
+            ]),
+            "metadata": .object([
+                "z": .integer(2),
+                "a": .integer(1)
+            ])
+        ]),
+        inputRaw: nil,
+        response: nil,
+        expected: nil,
+        metrics: [],
+        otherColumns: [:]
+    )
+    let reordered = EvaluationSample(
+        index: 1,
+        input: .object([
+            "metadata": .object([
+                "a": .integer(1),
+                "z": .integer(2)
+            ]),
+            "record": .object([
+                "a/b~c": .string("book-1")
+            ])
+        ]),
+        inputRaw: nil,
+        response: nil,
+        expected: nil,
+        metrics: [],
+        otherColumns: [:]
+    )
+
+    let pointer = EvaluationSampleKeyStrategy.jsonPointer(
+        "/record/a~1b~0c"
+    )
+    #expect(first.stableKey(using: pointer)?.value == #""book-1""#)
+    #expect(first.stableKey(using: .jsonPointer("record")) == nil)
+    #expect(first.stableKey(using: .jsonPointer("/missing")) == nil)
+    #expect(
+        first.stableKey(using: .canonicalInputDigest)
+            == reordered.stableKey(using: .canonicalInputDigest)
+    )
+}
+
+@Test("Sample comparisons classify evidence changes and unsafe joins")
+func comparesSamplesByStableKey() throws {
+    let baseline = try artifactWithResults(
+        #"""
+        {
+          "Input":{"record":{"id":"regressed"}},
+          "Response":{"value":"ok"},
+          "Expected":"ok",
+          "Accuracy":{"kind":"pass","value":true}
+        },
+        {
+          "Input":{"record":{"id":"fixed"}},
+          "Response":{"value":"wrong"},
+          "Expected":"ok",
+          "Accuracy":{"kind":"fail","value":false}
+        },
+        {
+          "Input":{"record":{"id":"changed"}},
+          "Response":{"value":"before"},
+          "Score":{"kind":"score","value":0.4}
+        },
+        {
+          "Input":{"record":{"id":"removed"}},
+          "Response":{"value":"gone"}
+        },
+        {
+          "Input":{"record":{"id":"duplicate"}},
+          "Response":{"value":"first"}
+        },
+        {
+          "Input":{"record":{"id":"duplicate"}},
+          "Response":{"value":"second"}
+        },
+        {
+          "Input":{"prompt":"No stable ID"},
+          "Response":{"value":"baseline"}
+        }
+        """#
+    )
+    let candidate = try artifactWithResults(
+        #"""
+        {
+          "Input":{"record":{"id":"regressed"}},
+          "Response":{"value":"wrong"},
+          "Expected":"ok",
+          "Accuracy":{"kind":"fail","value":false}
+        },
+        {
+          "Input":{"record":{"id":"fixed"}},
+          "Response":{"value":"ok"},
+          "Expected":"ok",
+          "Accuracy":{"kind":"pass","value":true}
+        },
+        {
+          "Input":{"record":{"id":"changed"}},
+          "Response":{"value":"after"},
+          "Score":{"kind":"score","value":0.5}
+        },
+        {
+          "Input":{"record":{"id":"duplicate"}},
+          "Response":{"value":"candidate"}
+        },
+        {
+          "Input":{"record":{"id":"added"}},
+          "Response":{"value":"new"}
+        },
+        {
+          "Input":{"prompt":"No stable ID"},
+          "Response":{"value":"candidate"}
+        }
+        """#
+    )
+
+    let comparisons = baseline.sampleComparisons(
+        with: candidate,
+        keyStrategy: .jsonPointer("/record/id")
+    )
+
+    #expect(
+        comparisons.map(\.classification) == [
+            .regressed,
+            .fixed,
+            .changed,
+            .removed,
+            .unjoinable,
+            .added,
+            .unjoinable,
+            .unjoinable
+        ]
+    )
+    let duplicate = try #require(
+        comparisons.first { $0.key?.value == #""duplicate""# }
+    )
+    #expect(duplicate.classification == .unjoinable)
+    #expect(duplicate.baselineSamples.count == 2)
+    #expect(duplicate.candidateSamples.count == 1)
+}
+
+@Test("Sample comparisons can classify structural regressions")
+func comparesStructuralFailures() throws {
+    let baseline = try artifactWithResults(
+        #"""
+        {
+          "Input":{"record":{"id":"book-1"}},
+          "Response":{"value":"expected"},
+          "Expected":"expected"
+        }
+        """#
+    )
+    let candidate = try artifactWithResults(
+        #"""
+        {
+          "Input":{"record":{"id":"book-1"}},
+          "Response":{"value":"unexpected"},
+          "Expected":"expected"
+        }
+        """#
+    )
+
+    #expect(
+        baseline.sampleComparisons(
+            with: candidate,
+            keyStrategy: .jsonPointer("/record/id")
+        ).first?.classification == .changed
+    )
+    #expect(
+        baseline.sampleComparisons(
+            with: candidate,
+            keyStrategy: .jsonPointer("/record/id"),
+            includingStructuralDifferences: true
+        ).first?.classification == .regressed
+    )
+}
+
 @Test("Validation remains forward compatible while finding structural errors")
 func validatesArtifacts() throws {
     let artifact = try EvaluationArtifact(data: Data(fixture.utf8))
@@ -458,3 +681,19 @@ private let encodedSubjectExpectedFixture = #"""
       ]
     }
     """#
+
+private func artifactWithResults(
+    _ results: String
+) throws -> EvaluationArtifact {
+    try EvaluationArtifact(
+        data: Data(
+            """
+            {
+              "results": [
+                \(results)
+              ]
+            }
+            """.utf8
+        )
+    )
+}

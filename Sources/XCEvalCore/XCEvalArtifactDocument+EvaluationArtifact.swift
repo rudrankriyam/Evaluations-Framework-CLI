@@ -7,6 +7,8 @@ extension XCEvalArtifactDocument {
     ) {
         self.init(
             path: artifact.sourceDescription,
+            artifactID: artifact.artifactID,
+            byteDigest: artifact.byteDigest,
             evaluationID: artifact.evaluationID,
             resultID: artifact.resultID,
             startTime: artifact.startTime,

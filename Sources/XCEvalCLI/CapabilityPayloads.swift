@@ -35,6 +35,27 @@ struct CapabilitiesPayload: Encodable {
 
 private let runtimeCapabilityPayloads = [
     CapabilityPayload(
+        name: "Discover and typecheck the installed Evaluations API",
+        frameworkAPIs: [
+            "Evaluations.swiftinterface",
+            "Evaluation",
+            "ModelJudgeEvaluator",
+            "ToolCallEvaluator",
+            "SampleGenerator"
+        ],
+        support: .native,
+        command: "xceval api list|show|example|verify",
+        boundary: """
+            Recipes require explicit product-owned semantics. Verification \
+            compiles them against the selected installed Xcode.
+            """,
+        automationUse: """
+            Let an external agent inspect exact declarations with source-line \
+            evidence, generate one explicit recipe family, and reject stale API \
+            assumptions before editing project code.
+            """
+    ),
+    CapabilityPayload(
         name: "Scaffold a typed evaluation package",
         frameworkAPIs: [
             "Evaluation",
@@ -194,6 +215,34 @@ private let runtimeCapabilityPayloads = [
 
 private let analysisCapabilityPayloads = [
     CapabilityPayload(
+        name: "Address artifacts and samples across runs",
+        frameworkAPIs: ["EvaluationResult persisted output"],
+        support: .native,
+        command: "xceval select|compare --include-samples|evidence",
+        boundary: """
+            Stable identity uses an explicit JSON Pointer or canonical input \
+            digest. Duplicate and missing keys are reported as unjoinable.
+            """,
+        automationUse: """
+            Give an external agent exact failures, rationales, structural \
+            differences, and per-sample regression classifications.
+            """
+    ),
+    CapabilityPayload(
+        name: "Manage reviewed regression datasets",
+        frameworkAPIs: ["ModelSample", "Loader"],
+        support: .native,
+        command: "xceval datasets discover|validate|select|draft|promote",
+        boundary: """
+            Promotion is explicit and expected labels remain immutable. Model \
+            responses are never promoted into expected values automatically.
+            """,
+        automationUse: """
+            Materialize selected failures, quarantine rejected candidates, and \
+            promote reviewed cases with stable digests and revision checks.
+            """
+    ),
+    CapabilityPayload(
         name: "Aggregate metrics",
         frameworkAPIs: [
             "Aggregation",
@@ -273,6 +322,34 @@ private let analysisCapabilityPayloads = [
 ]
 
 private let automationCapabilityPayloads = [
+    CapabilityPayload(
+        name: "Discover and run declared producers idempotently",
+        frameworkAPIs: ["Evaluation.run(info:)", "EvaluationResult.saveJSON"],
+        support: .orchestrated,
+        command: "xceval targets|target|run TARGET|operation",
+        boundary: """
+            The manifest declares argv, environment allowlists, outputs, and \
+            requirements. The producer still owns typed evaluation behavior.
+            """,
+        automationUse: """
+            Discover runnable work without heuristics, bind retries to one \
+            request digest, and inspect durable process/log/output receipts.
+            """
+    ),
+    CapabilityPayload(
+        name: "Plan safe, provenance-ready run directories",
+        frameworkAPIs: ["EvaluationResult persisted output"],
+        support: .native,
+        command: "xceval plan RUN_ID",
+        boundary: """
+            Planning is read-only and redacts environment values. The eventual \
+            creator must still exclusively create the proposed directory.
+            """,
+        automationUse: """
+            Preflight broad, protected, overlapping, or existing paths and \
+            capture the identities needed for a reproducible run.
+            """
+    ),
     CapabilityPayload(
         name: "Run a reproducible evaluation pipeline",
         frameworkAPIs: [

@@ -2,13 +2,17 @@ import Foundation
 import XCEvalCore
 import XCEvalFormat
 
-struct ArtifactIdentity: Encodable {
+struct ArtifactIdentity: Codable, Equatable, Sendable {
     let path: String
+    let artifactID: String
+    let byteDigest: String
     let evaluationID: String?
     let resultID: String?
 
     init(_ artifact: EvaluationArtifact) {
         path = artifact.sourceDescription
+        artifactID = artifact.artifactID
+        byteDigest = artifact.byteDigest
         evaluationID = artifact.evaluationID
         resultID = artifact.resultID
     }
@@ -16,6 +20,8 @@ struct ArtifactIdentity: Encodable {
 
 struct ArtifactListItem: Encodable {
     let path: String
+    let artifactID: String
+    let byteDigest: String
     let evaluationID: String?
     let resultID: String?
     let sampleCount: Int
@@ -25,6 +31,8 @@ struct ArtifactListItem: Encodable {
 
     init(_ artifact: EvaluationArtifact) {
         path = artifact.sourceDescription
+        artifactID = artifact.artifactID
+        byteDigest = artifact.byteDigest
         evaluationID = artifact.evaluationID
         resultID = artifact.resultID
         sampleCount = artifact.samples.count
@@ -167,16 +175,24 @@ struct GatePayload: Encodable {
     let schemaVersion = EvaluationArtifact.schemaVersion
     let command = "gate"
     let artifact: ArtifactIdentity
+    let baseline: ArtifactIdentity?
     let passed: Bool
     let rules: [EvaluationGateResult]
+    let deltaRules: [EvaluationDeltaGateResult]
 
     init(
         artifact: EvaluationArtifact,
-        results: [EvaluationGateResult]
+        results: [EvaluationGateResult],
+        baseline: EvaluationArtifact? = nil,
+        deltaResults: [EvaluationDeltaGateResult] = []
     ) {
         self.artifact = ArtifactIdentity(artifact)
-        passed = results.allSatisfy(\.passed)
+        self.baseline = baseline.map(ArtifactIdentity.init)
+        passed =
+            results.allSatisfy(\.passed)
+            && deltaResults.allSatisfy(\.passed)
         rules = results
+        deltaRules = deltaResults
     }
 }
 
@@ -196,6 +212,22 @@ struct ComparePayload: Encodable {
     let baseline: ArtifactIdentity
     let candidate: ArtifactIdentity
     let metrics: [EvaluationMetricComparison]
+    let sampleKeyStrategy: EvaluationSampleKeyStrategy?
+    let samples: [EvaluationSampleComparison]?
+
+    init(
+        baseline: ArtifactIdentity,
+        candidate: ArtifactIdentity,
+        metrics: [EvaluationMetricComparison],
+        sampleKeyStrategy: EvaluationSampleKeyStrategy? = nil,
+        samples: [EvaluationSampleComparison]? = nil
+    ) {
+        self.baseline = baseline
+        self.candidate = candidate
+        self.metrics = metrics
+        self.sampleKeyStrategy = sampleKeyStrategy
+        self.samples = samples
+    }
 }
 
 struct ExportPayload: Encodable {
@@ -222,13 +254,35 @@ struct DoctorPayload: Encodable {
 
 struct ProcessPayload: Encodable {
     let status: Int32
+    let terminationReason: ProcessTerminationReason
+    let terminationSignal: Int32?
+    let duration: TimeInterval
+    let processIdentifier: Int32
+    let processGroupIdentifier: Int32?
     let standardOutput: String
     let standardError: String
+    let standardOutputLog: String?
+    let standardErrorLog: String?
+    let standardOutputTruncated: Bool
+    let standardErrorTruncated: Bool
 
     init(_ result: ProcessResult) {
         status = result.status
+        terminationReason = result.terminationReason
+        terminationSignal = result.terminationSignal
+        duration = result.duration
+        processIdentifier = result.processIdentifier
+        processGroupIdentifier = result.processGroupIdentifier
         standardOutput = result.standardOutputString
         standardError = result.standardErrorString
+        standardOutputLog = result.standardOutputLog.url?.path
+        standardErrorLog = result.standardErrorLog.url?.path
+        standardOutputTruncated =
+            result.standardOutputLog.captureTruncated
+            || result.standardOutputLog.fileTruncated
+        standardErrorTruncated =
+            result.standardErrorLog.captureTruncated
+            || result.standardErrorLog.fileTruncated
     }
 }
 
@@ -240,19 +294,25 @@ struct RunPayload: Encodable {
     let resultsPath: String
     let process: ProcessPayload
     let artifacts: [ArtifactListItem]
+    let operationReceipt: OperationReceipt?
+    let errorMessage: String?
 
     init(
         producerCommand: [String],
         workingDirectory: String?,
         resultsPath: String,
         process: ProcessResult,
-        artifacts: [EvaluationArtifact]
+        artifacts: [EvaluationArtifact],
+        operationReceipt: OperationReceipt? = nil,
+        errorMessage: String? = nil
     ) {
         self.producerCommand = producerCommand
         self.workingDirectory = workingDirectory
         self.resultsPath = resultsPath
         self.process = ProcessPayload(process)
         self.artifacts = artifacts.map(ArtifactListItem.init)
+        self.operationReceipt = operationReceipt
+        self.errorMessage = errorMessage
     }
 }
 
@@ -327,4 +387,6 @@ struct InitPayload: Encodable {
     let executableName: String
     let destination: String
     let files: [String]
+    let template: String?
+    let authoringTemplateFile: String?
 }

@@ -1,0 +1,12 @@
+{
+  "command": "run",
+  "error": {
+    "code": "operation_conflict",
+    "details": {
+      "operationID": "search-quality-001"
+    },
+    "message": "The operation ID is bound to a different request.",
+    "retryable": false
+  },
+  "schemaVersion": "xceval.error/v1"
+}

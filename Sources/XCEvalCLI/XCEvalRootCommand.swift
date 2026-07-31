@@ -1,4 +1,6 @@
 import ArgumentParser
+import Darwin
+import Foundation
 import XCEvalCore
 
 @main
@@ -13,17 +15,25 @@ struct XCEvalRootCommand: AsyncParsableCommand {
             emits stable machine-readable output for scripts, CI, and developer \
             tools.
             """,
-        version: "0.3.0",
+        version: "0.4.0",
         subcommands: [
             InitCommand.self,
+            PlanCommand.self,
+            ApiCommand.self,
             CapabilitiesCommand.self,
             DoctorCommand.self,
+            TargetsCommand.self,
+            TargetCommand.self,
+            OperationCommand.self,
+            SelectCommand.self,
+            DatasetsCommand.self,
             ListCommand.self,
             ValidateCommand.self,
             InspectCommand.self,
             SamplesCommand.self,
             MetricsCommand.self,
             ReportCommand.self,
+            EvidenceCommand.self,
             DatasetCommand.self,
             CompareCommand.self,
             GateCommand.self,
@@ -36,13 +46,53 @@ struct XCEvalRootCommand: AsyncParsableCommand {
         ]
     )
 
+    static func main() async {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        do {
+            var command = try await asyncParseAsRoot(arguments)
+            if var asyncCommand = command as? AsyncParsableCommand {
+                try await asyncCommand.run()
+            } else {
+                try command.run()
+            }
+        } catch let exitCode as ExitCode {
+            exit(withError: exitCode)
+        } catch let cleanExit as CleanExit {
+            exit(withError: cleanExit)
+        } catch {
+            if argumentsContainMachineJSON(arguments) {
+                let document = machineErrorDocument(
+                    error: error,
+                    arguments: arguments
+                )
+                FileHandle.standardError.write(
+                    Data("Error: \(userFacingErrorMessage(error))\n".utf8)
+                )
+                try? CLIOutput.emit(
+                    document,
+                    options: ResolvedOutputOptions(
+                        format: .json,
+                        pretty: arguments.contains("--pretty")
+                    )
+                )
+                Darwin.exit(1)
+            }
+            exit(withError: error)
+        }
+    }
+
     mutating func run() async throws {
         print(
             """
             xceval is an unofficial CLI for Apple Evaluations workflows.
 
             Start with:
-              xceval init SearchQuality
+              xceval init SearchQuality --template deterministic
+              xceval api verify
+              xceval targets --output json
+              xceval run TARGET --operation-id RUN_ID --output json
+              xceval evidence Result.xcevalresult --output json
+              xceval plan --run-id RUN_ID
               xceval capabilities
               xceval doctor
               xceval inspect Result.xcevalresult
@@ -55,4 +105,15 @@ struct XCEvalRootCommand: AsyncParsableCommand {
             """
         )
     }
+}
+
+private func argumentsContainMachineJSON(_ arguments: [String]) -> Bool {
+    for index in arguments.indices
+    where arguments[index] == "--output"
+        && arguments.indices.contains(index + 1)
+        && arguments[index + 1] == "json"
+    {
+        return true
+    }
+    return arguments.contains("--output=json")
 }

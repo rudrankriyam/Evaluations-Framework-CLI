@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import XCEvalFormat
 
@@ -254,8 +255,44 @@ extension EvaluationArtifact {
 extension EvaluationSample {
     public var prompt: String? {
         input?["input"]?["prompt"]?.stringValue
+            ?? input?["record"]?["prompt"]?.stringValue
             ?? input?["prompt"]?.stringValue
             ?? input?["promptDescription"]?.stringValue
+    }
+
+    public func hasFailure(
+        includingStructuralDifferences: Bool
+    ) -> Bool {
+        hasFailure || (includingStructuralDifferences && !subjectExpectedDifferences.isEmpty)
+    }
+
+    public func stableKey(
+        using strategy: EvaluationSampleKeyStrategy
+    ) -> EvaluationSampleKey? {
+        switch strategy {
+        case .jsonPointer(let pointer):
+            guard let value = input?.value(atJSONPointer: pointer) else {
+                return nil
+            }
+            return EvaluationSampleKey(
+                strategy: strategy,
+                value: value.canonicalJSONString
+            )
+        case .canonicalInputDigest:
+            guard
+                let input,
+                let data = try? input.encodedData()
+            else {
+                return nil
+            }
+            let digest = SHA256.hash(data: data).map {
+                String(format: "%02x", $0)
+            }.joined()
+            return EvaluationSampleKey(
+                strategy: strategy,
+                value: digest
+            )
+        }
     }
 
     public var responseValue: JSONValue? {
@@ -293,6 +330,34 @@ extension EvaluationSample {
     }
 }
 
+public enum EvaluationSampleKeyStrategy:
+    Codable,
+    Equatable,
+    Hashable,
+    Sendable
+{
+    case jsonPointer(String)
+    case canonicalInputDigest
+}
+
+public struct EvaluationSampleKey:
+    Codable,
+    Equatable,
+    Hashable,
+    Sendable
+{
+    public let strategy: EvaluationSampleKeyStrategy
+    public let value: String
+
+    public init(
+        strategy: EvaluationSampleKeyStrategy,
+        value: String
+    ) {
+        self.strategy = strategy
+        self.value = value
+    }
+}
+
 public enum EvaluationValueDifferenceKind: String, Codable, Sendable {
     case typeMismatch = "type-mismatch"
     case valueMismatch = "value-mismatch"
@@ -326,6 +391,77 @@ private func normalizeStructuredJSONString(_ value: JSONValue) -> JSONValue {
         decoded.objectValue != nil || decoded.arrayValue != nil
     else {
         return value
+    }
+    return decoded
+}
+
+extension JSONValue {
+    public func value(atJSONPointer pointer: String) -> JSONValue? {
+        guard !pointer.isEmpty else { return self }
+        guard pointer.first == "/" else { return nil }
+
+        let tokens = pointer.dropFirst().split(
+            separator: "/",
+            omittingEmptySubsequences: false
+        )
+        var value = self
+        for rawToken in tokens {
+            guard let token = decodeJSONPointerToken(String(rawToken)) else {
+                return nil
+            }
+            switch value {
+            case .object(let object):
+                guard let child = object[token] else { return nil }
+                value = child
+            case .array(let array):
+                guard
+                    token != "-",
+                    let index = Int(token),
+                    index >= 0,
+                    index < array.count
+                else {
+                    return nil
+                }
+                value = array[index]
+            default:
+                return nil
+            }
+        }
+        return value
+    }
+
+    public var canonicalJSONString: String {
+        guard
+            let data = try? encodedData(),
+            let value = String(data: data, encoding: .utf8)
+        else {
+            return "null"
+        }
+        return value
+    }
+}
+
+private func decodeJSONPointerToken(_ token: String) -> String? {
+    var decoded = ""
+    var index = token.startIndex
+    while index < token.endIndex {
+        guard token[index] == "~" else {
+            decoded.append(token[index])
+            index = token.index(after: index)
+            continue
+        }
+
+        let escapedIndex = token.index(after: index)
+        guard escapedIndex < token.endIndex else { return nil }
+        switch token[escapedIndex] {
+        case "0":
+            decoded.append("~")
+        case "1":
+            decoded.append("/")
+        default:
+            return nil
+        }
+        index = token.index(after: escapedIndex)
     }
     return decoded
 }

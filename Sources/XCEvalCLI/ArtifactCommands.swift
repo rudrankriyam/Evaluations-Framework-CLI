@@ -67,6 +67,16 @@ struct SamplesCommand: ParsableCommand {
     )
     var onlyFailures = false
 
+    @Flag(
+        name: .long,
+        help: """
+            With --only-failures, also include Subject-versus-Expected \
+            structural mismatches even when no evaluator emitted a failing \
+            metric.
+            """
+    )
+    var includeStructuralDifferences = false
+
     @Option(
         name: .long,
         help: "Keep samples containing this metric name."
@@ -113,6 +123,11 @@ struct SamplesCommand: ParsableCommand {
     @OptionGroup var outputOptions: SamplesOutputOptions
 
     mutating func run() throws {
+        if includeStructuralDifferences, !onlyFailures {
+            throw ValidationError(
+                "--include-structural-differences requires --only-failures."
+            )
+        }
         guard offset >= 0 else {
             throw ValidationError("--offset must not be negative.")
         }
@@ -159,7 +174,11 @@ struct SamplesCommand: ParsableCommand {
     }
 
     private func matches(_ sample: EvaluationSample) -> Bool {
-        if onlyFailures, !sample.hasFailure {
+        if onlyFailures,
+            !sample.hasFailure(
+                includingStructuralDifferences: includeStructuralDifferences
+            )
+        {
             return false
         }
         if let metric, !sample.metrics.contains(where: { $0.name == metric }) {

@@ -26,21 +26,32 @@ jobs:
       - name: Resolve package dependencies
         run: swift package resolve
 
+      - name: Check Swift formatting
+        run: swift format lint --strict --recursive Sources Tests
+
       - name: Build and test
         run: |
           swift build
           swift test
 
       - name: Run CLI integration matrix
-        run: Tests/Integration/cli-integration.sh .build/debug/xceval
+        run: |
+          Tests/Integration/cli-integration.sh .build/debug/xceval
+          Tests/Integration/agent-loop-integration.sh .build/debug/xceval
+
+      - name: Verify Xcode 27 Evaluations lab when available
+        run: Tests/Fixtures/EvaluationsLab/Scripts/verify-harness.sh
 
       - name: Build universal release binary
         run: |
           rm -rf .build-release build
           swift build -c release --arch arm64 --arch x86_64 \
             --product xceval --scratch-path .build-release
+          BINARY_DIRECTORY="$(swift build -c release \
+            --arch arm64 --arch x86_64 --product xceval \
+            --scratch-path .build-release --show-bin-path)"
           mkdir -p build
-          cp .build-release/apple/Products/Release/xceval build/xceval_dev_macOS_universal
+          cp "${BINARY_DIRECTORY}/xceval" build/xceval_dev_macOS_universal
           shasum -a 256 build/xceval_dev_macOS_universal > build/xceval_dev_checksums.txt
 
       - name: Upload build artifacts

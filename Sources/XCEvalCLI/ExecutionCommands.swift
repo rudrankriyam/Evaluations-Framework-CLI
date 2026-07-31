@@ -2,7 +2,7 @@ import ArgumentParser
 import Foundation
 import XCEvalCore
 
-struct RunCommand: ParsableCommand {
+struct RunCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "run",
         abstract: "Run any typed evaluation producer and collect its artifacts.",
@@ -13,11 +13,25 @@ struct RunCommand: ParsableCommand {
             """
     )
 
+    @Argument(
+        help: """
+            Declared target ID. Omit it when providing a legacy producer \
+            command after '--'.
+            """
+    )
+    var targetID: String?
+
     @Option(
         name: .long,
         help: "File or directory where the producer writes evaluation artifacts."
     )
-    var resultsPath: String
+    var resultsPath: String?
+
+    @Option(
+        name: .customLong("targets"),
+        help: "Target manifest. Defaults to .xceval/targets.json."
+    )
+    var targetManifestPath = ".xceval/targets.json"
 
     @Option(
         name: .long,
@@ -37,6 +51,30 @@ struct RunCommand: ParsableCommand {
     )
     var allowEmpty = false
 
+    @Option(
+        name: .long,
+        help: "Caller-stable idempotency key for a durable operation receipt."
+    )
+    var operationID: String?
+
+    @Option(
+        name: .long,
+        help: "Directory containing durable operation receipts and logs."
+    )
+    var stateDirectory = ".xceval/operations"
+
+    @Option(
+        name: .long,
+        help: "Maximum producer wall-clock duration in seconds."
+    )
+    var timeout: Double?
+
+    @Option(
+        name: .long,
+        help: "Producer-owned selected-sample manifest."
+    )
+    var selection: String?
+
     @OptionGroup var outputOptions: StandardOutputOptions
 
     @Argument(
@@ -45,71 +83,443 @@ struct RunCommand: ParsableCommand {
     )
     var producerCommand: [String] = []
 
-    mutating func run() throws {
-        guard !producerCommand.isEmpty else {
-            throw ValidationError(
-                "Provide a producer command after '--'."
-            )
+    mutating func run() async throws {
+        if let timeout, !timeout.isFinite || timeout < 0 {
+            throw ValidationError("--timeout must be a finite nonnegative value.")
         }
         let output = try outputOptions.resolve()
-        let resultsURL = resolvedResultsURL()
-        let before = artifactSnapshot(at: resultsURL)
-        let process = try ProcessRunner.run(
-            executable: URL(fileURLWithPath: "/usr/bin/env"),
-            arguments: producerCommand,
-            currentDirectory: workingDirectory.map(expandedURL)
+        let invocation = try resolvedInvocation()
+        let resultsURL = invocation.resultsURL
+        let operation = try claimOperation(
+            invocation: invocation,
+            output: output
         )
-        let after = artifactSnapshot(at: resultsURL)
-        let changedPaths = after.keys.filter {
-            includeExisting || before[$0] != after[$0]
-        }.sorted()
-        let artifacts = try changedPaths.flatMap {
-            let loaded = try EvaluationArtifactLoader.load(
-                from: URL(fileURLWithPath: $0)
-            )
-            if includeExisting {
-                return loaded
+        if case .existing(let receipt) = operation {
+            try emitReplay(receipt, output: output)
+            if receipt.state != .succeeded {
+                throw ExitCode.failure
             }
-            return artifactsAddedOrChanged(
-                loaded,
-                comparedTo: before[$0]
-            )
+            return
         }
+        let runningReceipt: OperationReceipt?
+        if case .claimed(let receipt) = operation {
+            runningReceipt = receipt
+        } else {
+            runningReceipt = nil
+        }
+
+        let before = artifactSnapshot(at: resultsURL)
+        let process: ProcessResult
+        do {
+            process = try await ProcessRunner.runAsync(
+                executable: URL(fileURLWithPath: "/usr/bin/env"),
+                arguments: invocation.command,
+                currentDirectory: invocation.workingDirectory,
+                environment: invocation.environment,
+                options: processOptions()
+            )
+        } catch {
+            try failOperation(runningReceipt, message: error.localizedDescription)
+            throw error
+        }
+
+        let artifacts: [EvaluationArtifact]
+        do {
+            let after = artifactSnapshot(at: resultsURL)
+            let changedPaths = after.keys.filter {
+                includeExisting || before[$0] != after[$0]
+            }.sorted()
+            artifacts = try changedPaths.flatMap {
+                let loaded = try EvaluationArtifactLoader.load(
+                    from: URL(fileURLWithPath: $0)
+                )
+                if includeExisting {
+                    return loaded
+                }
+                return artifactsAddedOrChanged(
+                    loaded,
+                    comparedTo: before[$0]
+                )
+            }
+        } catch {
+            try failOperation(
+                runningReceipt,
+                process: process,
+                message: error.localizedDescription
+            )
+            throw error
+        }
+        let artifactError = minimumArtifactError(
+            invocation.minimumArtifactCount,
+            artifacts: artifacts,
+            process: process
+        )
+
+        let completedReceipt = try completeOperation(
+            runningReceipt,
+            process: process,
+            artifacts: artifacts,
+            semanticFailure: artifactError
+        )
         let payload = RunPayload(
-            producerCommand: producerCommand,
-            workingDirectory: workingDirectory.map {
-                expandedURL($0).path
-            },
+            producerCommand: invocation.command,
+            workingDirectory: invocation.workingDirectory?.path,
             resultsPath: resultsURL.path,
             process: process,
-            artifacts: artifacts
+            artifacts: artifacts,
+            operationReceipt: completedReceipt,
+            errorMessage: artifactError
         )
         try emit(payload, output: output)
 
         if process.status != 0 {
             throw ExitCode(process.status)
         }
-        if artifacts.isEmpty, !allowEmpty {
-            throw ValidationError(
-                """
-                The producer succeeded but no new or changed evaluation artifacts \
-                were found under \(resultsURL.path).
-                """
-            )
+        if let artifactError {
+            if output.format == .text {
+                FileHandle.standardError.write(Data("\(artifactError)\n".utf8))
+            }
+            throw ExitCode.failure
         }
     }
 
-    private func resolvedResultsURL() -> URL {
-        let expandedPath = (resultsPath as NSString).expandingTildeInPath
-        if (expandedPath as NSString).isAbsolutePath {
-            return expandedURL(expandedPath)
+    private func resolvedInvocation() throws -> ResolvedRunInvocation {
+        if let targetID {
+            guard producerCommand.isEmpty else {
+                throw ValidationError(
+                    "Do not combine a declared target with a command after '--'."
+                )
+            }
+            let loaded = try loadTargetManifest(targetManifestPath)
+            let target = try loaded.manifest.target(id: targetID)
+            let manifestDirectory = loaded.url.deletingLastPathComponent()
+            let resolvedWorkingDirectory =
+                workingDirectory.map(expandedURL)
+                ?? target.workingDirectory.map {
+                    resolvePath($0, relativeTo: manifestDirectory)
+                }
+                ?? manifestDirectory
+            guard
+                let output = target.outputs.first(where: {
+                    $0.format != .xcresult
+                })
+            else {
+                throw ValidationError(
+                    "Target '\(targetID)' has no evaluation-result output."
+                )
+            }
+            let resolvedResults =
+                resultsPath.map {
+                    resolvePath($0, relativeTo: resolvedWorkingDirectory)
+                }
+                ?? resolvePath(output.path, relativeTo: resolvedWorkingDirectory)
+            try validateRunOutput(
+                resolvedResults,
+                workingDirectory: resolvedWorkingDirectory
+            )
+            var environment = target.resolvedEnvironment()
+            if target.argv.first?.contains("/") != true,
+                environment["PATH"] == nil
+            {
+                throw ValidationError(
+                    "Target '\(targetID)' must inherit or set PATH because its "
+                        + "executable is not an absolute path."
+                )
+            }
+            let resolvedSelection = try selection.map {
+                try selectionIdentity(at: $0)
+            }
+            if let identity = resolvedSelection {
+                environment["XCEVAL_SELECTION_PATH"] = identity.path
+            }
+            if let operationID {
+                environment["XCEVAL_OPERATION_ID"] = operationID
+            }
+            if target.requirements.contains(where: {
+                $0.capability == "apple.evaluations"
+            }) {
+                let installation =
+                    try XcodeLocator.evaluationCapableInstallation()
+                environment["DEVELOPER_DIR"] =
+                    installation.developerDirectory
+            }
+            return ResolvedRunInvocation(
+                command: target.argv,
+                workingDirectory: resolvedWorkingDirectory,
+                resultsURL: resolvedResults,
+                environment: environment,
+                targetRevision: target.revision,
+                minimumArtifactCount: output.minimumCount,
+                selection: resolvedSelection
+            )
         }
-        if let workingDirectory {
-            return expandedURL(workingDirectory)
-                .appendingPathComponent(expandedPath)
-                .standardizedFileURL
+
+        guard !producerCommand.isEmpty else {
+            throw ValidationError(
+                "Provide a target ID or a producer command after '--'."
+            )
         }
-        return expandedURL(expandedPath)
+        guard let resultsPath else {
+            throw ValidationError(
+                "Legacy producer commands require --results-path."
+            )
+        }
+        let resolvedWorkingDirectory = workingDirectory.map(expandedURL)
+        let resolvedResults = resolvePath(
+            resultsPath,
+            relativeTo: resolvedWorkingDirectory
+                ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        )
+        try validateRunOutput(
+            resolvedResults,
+            workingDirectory: resolvedWorkingDirectory
+                ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        )
+        var environment = ProcessInfo.processInfo.environment
+        let resolvedSelection = try selection.map {
+            try selectionIdentity(at: $0)
+        }
+        if let identity = resolvedSelection {
+            environment["XCEVAL_SELECTION_PATH"] = identity.path
+        }
+        if let operationID {
+            environment["XCEVAL_OPERATION_ID"] = operationID
+        }
+        return ResolvedRunInvocation(
+            command: producerCommand,
+            workingDirectory: resolvedWorkingDirectory,
+            resultsURL: resolvedResults,
+            environment: environment,
+            targetRevision: nil,
+            minimumArtifactCount: nil,
+            selection: resolvedSelection
+        )
+    }
+
+    private func selectionIdentity(at path: String) throws -> RunSelectionIdentity {
+        let url = expandedURL(path)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw ValidationError(
+                "The selection manifest does not exist: \(url.path)"
+            )
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw ValidationError(
+                "The selection manifest could not be read: "
+                    + error.localizedDescription
+            )
+        }
+        let object: Any
+        do {
+            object = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw ValidationError(
+                "The selection manifest is not valid JSON: "
+                    + error.localizedDescription
+            )
+        }
+        guard let document = object as? [String: Any] else {
+            throw ValidationError(
+                "The selection manifest must contain a JSON object."
+            )
+        }
+        guard document["schemaVersion"] as? String == "xceval.selection/v1" else {
+            throw ValidationError(
+                "The selection manifest must use schemaVersion "
+                    + "'xceval.selection/v1'."
+            )
+        }
+        guard
+            let sampleKey = document["sampleKey"] as? String,
+            !sampleKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let count = document["count"] as? Int,
+            count >= 0,
+            let samples = document["samples"] as? [Any],
+            samples.count == count
+        else {
+            throw ValidationError(
+                "The selection manifest must declare a nonempty sampleKey and "
+                    + "a nonnegative count matching its samples array."
+            )
+        }
+        var selectedKeys = Set<String>()
+        for sample in samples {
+            guard
+                let value = sample as? [String: Any],
+                let key = value["key"] as? String,
+                !key.isEmpty,
+                let index = value["index"] as? Int,
+                index >= 0,
+                selectedKeys.insert(key).inserted
+            else {
+                throw ValidationError(
+                    "Every selected sample must contain a unique nonempty key "
+                        + "and nonnegative integer index."
+                )
+            }
+        }
+        let canonical = try JSONSerialization.data(
+            withJSONObject: document,
+            options: [.sortedKeys]
+        )
+        let source = document["source"] as? [String: Any]
+        return RunSelectionIdentity(
+            path: url.path,
+            contentDigest: ContentDigest(data: canonical).description,
+            sourceArtifactID: source?["artifactID"] as? String
+        )
+    }
+
+    private func processOptions() -> ProcessExecutionOptions {
+        guard let operationID else {
+            return ProcessExecutionOptions(
+                timeout: timeout,
+                handlesInterruptSignals: true
+            )
+        }
+        let root = expandedURL(stateDirectory)
+        let digest = ContentDigest(data: Data(operationID.utf8)).rawValue
+        return ProcessExecutionOptions(
+            timeout: timeout,
+            handlesInterruptSignals: true,
+            logs: ProcessLogOptions(
+                standardOutputURL:
+                    root
+                    .appendingPathComponent("logs/\(digest).stdout.log"),
+                standardErrorURL:
+                    root
+                    .appendingPathComponent("logs/\(digest).stderr.log"),
+                maximumFileBytes: 67_108_864
+            )
+        )
+    }
+
+    private func validateRunOutput(
+        _ output: URL,
+        workingDirectory: URL
+    ) throws {
+        try DestructivePathPolicy(
+            allowedRoot: output.deletingLastPathComponent(),
+            protectedPaths: [workingDirectory]
+        ).validate(targets: [output])
+    }
+
+    private func claimOperation(
+        invocation: ResolvedRunInvocation,
+        output: ResolvedOutputOptions
+    ) throws -> RunOperationClaim? {
+        guard let operationID else { return nil }
+        let environmentDigest = try ContentDigest.canonicalJSON(
+            invocation.environment
+        )
+        let digest = try ContentDigest.canonicalJSON(
+            RunRequestIdentity(
+                command: invocation.command,
+                workingDirectory: invocation.workingDirectory?.path,
+                resultsPath: invocation.resultsURL.path,
+                targetRevision: invocation.targetRevision,
+                environmentDigest: environmentDigest.description,
+                selection: invocation.selection,
+                timeout: timeout,
+                includeExisting: includeExisting,
+                allowEmpty: allowEmpty,
+                minimumArtifactCount: invocation.minimumArtifactCount
+            )
+        )
+        let receipt = OperationReceipt(
+            idempotencyKey: operationID,
+            operation: "run",
+            inputDigest: digest.description
+        )
+        let store = OperationReceiptStore(directory: expandedURL(stateDirectory))
+        switch try store.claim(receipt) {
+        case .claimed(let claimed):
+            return .claimed(claimed)
+        case .existing(let existing):
+            guard
+                existing.operation == "run",
+                existing.inputDigest == digest.description
+            else {
+                throw ValidationError(
+                    "Operation ID '\(operationID)' is already bound to a "
+                        + "different run request."
+                )
+            }
+            _ = output
+            return .existing(existing)
+        }
+    }
+
+    private func completeOperation(
+        _ receipt: OperationReceipt?,
+        process: ProcessResult,
+        artifacts: [EvaluationArtifact],
+        semanticFailure: String?
+    ) throws -> OperationReceipt? {
+        guard let receipt else { return nil }
+        let outputs = artifacts.map {
+            OperationOutputArtifact(
+                path: $0.sourceDescription,
+                contentDigest: ContentDigest(data: $0.rawData).description
+            )
+        }
+        let completed: OperationReceipt
+        if let semanticFailure {
+            completed = receipt.failing(
+                with: process,
+                outputs: outputs,
+                message: semanticFailure
+            )
+        } else {
+            completed = receipt.completing(
+                with: process,
+                outputs: outputs
+            )
+        }
+        try OperationReceiptStore(
+            directory: expandedURL(stateDirectory)
+        ).save(completed)
+        return completed
+    }
+
+    private func failOperation(
+        _ receipt: OperationReceipt?,
+        process: ProcessResult? = nil,
+        message: String
+    ) throws {
+        guard let receipt else { return }
+        let failed =
+            process.map {
+                receipt.failing(with: $0, message: message)
+            }
+            ?? receipt.failing(message: message)
+        try OperationReceiptStore(
+            directory: expandedURL(stateDirectory)
+        ).save(failed)
+    }
+
+    private func minimumArtifactError(
+        _ minimumCount: Int?,
+        artifacts: [EvaluationArtifact],
+        process: ProcessResult
+    ) -> String? {
+        guard process.status == 0 else {
+            return nil
+        }
+        if let minimumCount, artifacts.count < minimumCount {
+            return "The target requires at least \(minimumCount) artifact(s), but "
+                + "the run produced \(artifacts.count)."
+        }
+        if artifacts.isEmpty, !allowEmpty {
+            return """
+                The producer succeeded but no new or changed evaluation artifacts \
+                were found under the requested results path.
+                """
+        }
+        return nil
     }
 
     private func emit(
@@ -137,6 +547,60 @@ struct RunCommand: ParsableCommand {
             preconditionFailure("Validated output format is exhaustive.")
         }
     }
+
+    private func emitReplay(
+        _ receipt: OperationReceipt,
+        output: ResolvedOutputOptions
+    ) throws {
+        switch output.format {
+        case .text:
+            print(
+                "Operation \(receipt.idempotencyKey) is "
+                    + "\(receipt.state.rawValue); producer was not re-executed."
+            )
+            if let errorMessage = receipt.errorMessage {
+                FileHandle.standardError.write(Data("\(errorMessage)\n".utf8))
+            }
+        case .json:
+            try CLIOutput.emit(receipt, options: output)
+        case .jsonl, .rawJSON:
+            preconditionFailure("Validated output format is exhaustive.")
+        }
+    }
+}
+
+private struct ResolvedRunInvocation {
+    let command: [String]
+    let workingDirectory: URL?
+    let resultsURL: URL
+    let environment: [String: String]
+    let targetRevision: String?
+    let minimumArtifactCount: Int?
+    let selection: RunSelectionIdentity?
+}
+
+private struct RunRequestIdentity: Encodable {
+    let command: [String]
+    let workingDirectory: String?
+    let resultsPath: String
+    let targetRevision: String?
+    let environmentDigest: String
+    let selection: RunSelectionIdentity?
+    let timeout: Double?
+    let includeExisting: Bool
+    let allowEmpty: Bool
+    let minimumArtifactCount: Int?
+}
+
+private struct RunSelectionIdentity: Encodable {
+    let path: String
+    let contentDigest: String
+    let sourceArtifactID: String?
+}
+
+private enum RunOperationClaim {
+    case claimed(OperationReceipt)
+    case existing(OperationReceipt)
 }
 
 struct TestCommand: ParsableCommand {
@@ -325,16 +789,31 @@ struct TestCommand: ParsableCommand {
             .deletingPathExtension()
             .appendingPathExtension("evaluations")
 
-        for location in [resultBundle, outputDirectory]
-        where fileManager.fileExists(atPath: location.path) {
+        let locations = [resultBundle, outputDirectory]
+        let existingLocations = locations.filter {
+            fileManager.fileExists(atPath: $0.path)
+        }
+        if !existingLocations.isEmpty {
             guard force else {
                 throw ValidationError(
                     """
-                    Output already exists at \(location.path). Pass --force \
+                    Output already exists at \(existingLocations[0].path). Pass --force \
                     to replace it.
                     """
                 )
             }
+            let protectedWorkingDirectory =
+                workingDirectory.map(expandedURL)
+                ?? URL(
+                    fileURLWithPath: fileManager.currentDirectoryPath,
+                    isDirectory: true
+                )
+            try validateForcedReplacement(
+                targets: locations,
+                protecting: [protectedWorkingDirectory]
+            )
+        }
+        for location in existingLocations {
             try fileManager.removeItem(at: location)
         }
         try fileManager.createDirectory(

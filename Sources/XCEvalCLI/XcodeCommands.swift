@@ -81,6 +81,16 @@ struct ExportCommand: ParsableCommand {
                 "The output directory already exists. Pass --force to replace it."
             )
         }
+        try validateForcedReplacement(
+            targets: [destination],
+            protecting: [
+                input,
+                URL(
+                    fileURLWithPath: fileManager.currentDirectoryPath,
+                    isDirectory: true
+                )
+            ]
+        )
         try fileManager.removeItem(at: destination)
     }
 

@@ -297,14 +297,17 @@ mark "semantic version"
 "$BIN" >"$WORK/root.txt"
 assert_contains "$WORK/root.txt" "unofficial CLI" "root guidance"
 
-for command in init capabilities doctor list validate inspect samples metrics report dataset compare gate convert pipeline run test export schema; do
+for command in \
+    init api capabilities doctor targets target operation plan select evidence \
+    datasets list validate inspect samples metrics report dataset compare gate \
+    convert pipeline run test export schema; do
     "$BIN" "$command" --help >"$WORK/help-$command.txt"
     assert_contains "$WORK/help-$command.txt" "USAGE:" "help: $command"
 done
 
 "$BIN" capabilities --xcode "$WORK/missing.app" --output json >"$WORK/capabilities.json"
 assert_json "$WORK/capabilities.json" \
-    'len(d["capabilities"]) == 15 and sorted(set(x["support"] for x in d["capabilities"])) == ["native", "orchestrated", "producer-owned"]' \
+    'len(d["capabilities"]) == 20 and sorted(set(x["support"] for x in d["capabilities"])) == ["native", "orchestrated", "producer-owned"]' \
     "capability boundary matrix"
 
 "$BIN" doctor --xcode "$WORK/missing.app" --output json >"$WORK/doctor.json"
@@ -655,11 +658,17 @@ INIT_DIRECTORY="$WORK/GeneratedFeatureEvaluations"
     --path "$INIT_DIRECTORY" \
     --output json >"$WORK/init.json"
 assert_json "$WORK/init.json" \
-    'd["packageName"] == "GeneratedFeatureEvaluations" and d["executableName"] == "generated-feature-evaluate" and len(d["files"]) == 8' \
+    'd["packageName"] == "GeneratedFeatureEvaluations" and d["executableName"] == "generated-feature-evaluate" and len(d["files"]) == 9' \
     "evaluation starter generation"
 test -f "$INIT_DIRECTORY/xceval.pipeline.json"
+test -f "$INIT_DIRECTORY/.xceval/targets.json"
 test -f "$INIT_DIRECTORY/Sources/GeneratedFeatureEvaluations/GeneratedFeatureEvaluation.swift"
 mark "generated starter files"
+"$BIN" targets "$INIT_DIRECTORY/.xceval/targets.json" \
+    --output json >"$WORK/init-targets.json"
+assert_json "$WORK/init-targets.json" \
+    'd["count"] == 1 and d["targets"][0]["id"] == "generated-feature-evaluate" and d["targets"][0]["sampleKeyPointer"] == "/input/prompt"' \
+    "generated starter declares an agent target"
 expect_failure "init protects existing destination" \
     "$BIN" init "Generated Feature" --path "$INIT_DIRECTORY" --output json
 RESERVED_INIT_DIRECTORY="$WORK/ReservedEvaluation"

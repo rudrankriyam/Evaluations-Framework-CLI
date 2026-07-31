@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import XCEvalCore
 
 @testable import XCEvalCLI
 
@@ -127,13 +128,108 @@ func parsesInitOptions() throws {
     #expect(initializer.path == "/tmp/SearchQualityEvaluations")
 }
 
+@Test("Init parses an explicit authoring template")
+func parsesInitAuthoringTemplate() throws {
+    let command = try XCEvalRootCommand.parseAsRoot([
+        "init",
+        "Search Quality",
+        "--template",
+        "tool-call"
+    ])
+    let initializer = try #require(command as? InitCommand)
+
+    #expect(initializer.template == .toolCall)
+}
+
+@Test("API commands parse exact symbols, recipes, and Xcode selection")
+func parsesAPICommands() throws {
+    let list = try #require(
+        try XCEvalRootCommand.parseAsRoot([
+            "api",
+            "list",
+            "--xcode",
+            "/Applications/Xcode-beta.app",
+            "--output",
+            "json"
+        ]) as? ApiListCommand
+    )
+    #expect(list.xcode == "/Applications/Xcode-beta.app")
+    #expect(list.outputOptions.output == .json)
+
+    let show = try #require(
+        try XCEvalRootCommand.parseAsRoot([
+            "api",
+            "show",
+            "Evaluations.ToolCallEvaluator"
+        ]) as? ApiShowCommand
+    )
+    #expect(show.symbol == "Evaluations.ToolCallEvaluator")
+
+    let example = try #require(
+        try XCEvalRootCommand.parseAsRoot([
+            "api",
+            "example",
+            "model-judge",
+            "--type-name",
+            "MyJudgeEvaluation"
+        ]) as? ApiExampleCommand
+    )
+    #expect(example.kind == .modelJudge)
+    #expect(example.typeName == "MyJudgeEvaluation")
+
+    let verify = try #require(
+        try XCEvalRootCommand.parseAsRoot([
+            "api",
+            "verify",
+            "synthetic",
+            "--xcode",
+            "/Applications/Xcode-beta.app"
+        ]) as? ApiVerifyCommand
+    )
+    #expect(verify.kind == .synthetic)
+    #expect(verify.xcode == "/Applications/Xcode-beta.app")
+}
+
+@Test("API payloads expose stable command schemas")
+func encodesAPIPayloadSchemas() throws {
+    let source = EvaluationsAPISource(
+        frameworkPath: "/Xcode/Evaluations.framework",
+        interfacePath: "/Xcode/Evaluations.swiftinterface",
+        architecture: "arm64"
+    )
+    let catalog = EvaluationsAPICatalog(
+        source: source,
+        symbols: [
+            EvaluationsAPISymbol(
+                name: "Evaluation",
+                kind: .protocol,
+                declaration: "public protocol Evaluation {}",
+                availability: [],
+                sourceLocation: EvaluationsAPISourceLocation(
+                    path: source.interfacePath,
+                    startLine: 1,
+                    endLine: 1
+                )
+            )
+        ]
+    )
+    let data = try JSONEncoder().encode(ApiListPayload(catalog: catalog))
+    let json = try #require(
+        try JSONSerialization.jsonObject(with: data) as? [String: Any]
+    )
+
+    #expect(json["schemaVersion"] as? String == "xceval.evaluations-api/v1")
+    #expect(json["command"] as? String == "api list")
+    #expect(json["count"] as? Int == 1)
+}
+
 @Test("Capabilities cover native, orchestrated, and producer-owned work")
 func exposesCapabilityBoundaries() throws {
     let capabilities = CapabilitiesPayload(
         selectedXcode: nil
     ).capabilities
 
-    #expect(capabilities.count == 15)
+    #expect(capabilities.count == 20)
     #expect(capabilities.contains { $0.support == .native })
     #expect(capabilities.contains { $0.support == .orchestrated })
     #expect(capabilities.contains { $0.support == .producerOwned })

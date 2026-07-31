@@ -5,10 +5,11 @@
 > Apple command or product, Apple does not use it as the public name of the
 > framework, and it is not affiliated with or endorsed by Apple.
 
-`xceval` is an unofficial command-line toolkit for Apple Evaluations workflows:
-scaffold a typed starter, run evaluation stages, drive Xcode tests, export
-attachments, reproduce the data behind Xcode's evaluation report, compare runs,
-validate collections, and enforce explicit CI gates.
+`xceval` is an unofficial command-line control plane for Apple Evaluations
+workflows. It gives a developer or external coding agent deterministic tools to
+discover evaluation targets, scaffold and typecheck framework code, run
+producers, export attachments, inspect failures, manage regression datasets,
+compare runs, enforce gates, and repeat the loop.
 
 ## Why This Exists
 
@@ -32,29 +33,36 @@ tests; `xceval run` and `xceval test` orchestrate those producers.
 
 ## Scope
 
-`xceval init` creates compilable typed boilerplate, but `xceval` cannot author
-the meaningful part of an evaluation for you. Representative datasets,
-feature-specific subjects, criteria, model judges, tool expectations, and model
-execution remain Swift code owned by the app, package, or benchmark harness.
+`xceval` can author the mechanical parts of an evaluation: discover the exact
+installed framework API, generate explicit recipe families, typecheck them
+against the selected Xcode, scaffold runnable targets, and maintain the data and
+evidence contracts around them. It intentionally does not invent what “good”
+means. A person or coding agent supplies the feature behavior, representative
+inputs, criteria, expected outcomes, judge policy, tool expectations, and
+threshold direction.
 
-The CLI can begin at one of three boundaries:
+That split is what makes the complete loop useful. `xceval` owns deterministic
+execution and evidence; the external agent owns reasoning and source edits. No
+`--agent` flag is needed, and `xceval` never embeds Codex or another agent.
 
-1. A generated starter package from `xceval init`.
-2. An executable that can save `.xcevalresult` files.
-3. An Xcode test that attaches evaluation results with Swift Testing.
+The CLI can begin from a generated starter, a declared producer executable, an
+Xcode test with Swift Testing attachments, or existing `.xcevalresult` data.
 
 | Workflow | Owner |
 | --- | --- |
-| Generate a working package, test, producer, dataset, and pipeline manifest | `xceval init` |
-| Define datasets, subjects, evaluators, judges, tools, and aggregation | App or package using `Evaluations.framework` |
+| Discover installed Evaluations APIs and generate compile-checked recipes | `xceval api` |
+| Generate a working package, test, producer, dataset, target, and pipeline manifest | `xceval init` |
+| Define feature semantics, evaluators, judges, tools, and thresholds | Developer or external agent |
+| Validate, select, quarantine, and promote versioned datasets | `xceval datasets` |
 | Invoke the model and record deployment-specific benchmark measurements | App-specific producer or benchmark harness |
-| Launch an existing producer and collect changed results | `xceval run` |
+| Discover and launch a declared producer with an idempotent receipt | `xceval targets`, `target`, `run`, `operation` |
 | Run Xcode tests and export attached results | `xceval test` |
 | Execute named stages and write one complete analysis directory | `xceval pipeline` |
-| Inspect, filter, normalize, validate, compare, convert, and gate persisted results | `xceval` |
+| Select failures and emit compact, source-grounded evidence | `xceval select`, `evidence` |
+| Inspect, normalize, compare, convert, and apply absolute or delta gates | `xceval` |
 
-This makes `xceval` useful both when adopting Apple Evaluations and after a
-project has built a mature evaluation suite.
+This supports both initial adoption and the repeated
+run → inspect → edit → rerun workflow of a mature evaluation suite.
 
 ## Build
 
@@ -81,17 +89,18 @@ brew install xceval
 The package publishes two library products alongside the executable:
 
 - `XCEvalFormat` is the preferred interoperability surface. It contains public
-  models and decoders for normalized `xceval/v1` inspect, samples, and JSONL
-  output.
+  models and decoders for normalized command output, JSONL samples, target and
+  selection manifests, operation receipts, and structured errors.
 - `XCEvalCore` exposes the existing artifact, analysis, pipeline, Xcode, and
-  process utilities. Its API is experimental while `xceval` remains pre-1.0.
+  process utilities plus target, dataset, authoring, provenance, and safety
+  primitives. Its API is experimental while `xceval` remains pre-1.0.
 
 Add the package and select only the product your target needs:
 
 ```swift
 .package(
     url: "https://github.com/rudrankriyam/Evaluations-Framework-CLI.git",
-    from: "0.3.0"
+    from: "0.4.0"
 )
 ```
 
@@ -109,11 +118,16 @@ case .inspect(let output):
     print(output.artifact.samples?.count ?? 0)
 case .samples(let output):
     print(output.samples.count)
+case .error(let output):
+    print(output.error.code)
+default:
+    break
 }
 ```
 
 Golden examples and compatibility rules live under
-[`Contracts/xceval-v1`](Contracts/xceval-v1). Within `xceval/v1`, consumers
+[`Contracts/xceval-v1`](Contracts/xceval-v1) and
+[`Contracts/agent-v1`](Contracts/agent-v1). Within a schema version, consumers
 must tolerate additive fields. Breaking field or semantic changes require a
 new schema version.
 
@@ -127,9 +141,14 @@ library.
 
 ```bash
 # Create a compilable macOS 27 package and ready-to-run pipeline.
-xceval init SearchQuality
+xceval init SearchQuality --template deterministic
 cd SearchQualityEvaluations
 xceval pipeline
+
+# Inspect the exact installed Beta framework and typecheck every recipe.
+xceval api show ModelJudgeEvaluator
+xceval api example tool-call --type-name SearchToolEvaluation
+xceval api verify --xcode /Applications/Xcode-27.0.0-Beta.4.app
 
 # Print supported operations and producer-owned boundaries.
 xceval capabilities --output json
@@ -171,21 +190,52 @@ xceval report Result.xcevalresult --output json --pretty
 # Superset Apple's sample DatasetExtractor output.
 xceval dataset Result.xcevalresult --output apple-json --pretty
 
-# Compare aggregate values without assuming metric direction.
-xceval compare Baseline.xcevalresult Candidate.xcevalresult --output json
+# Compare aggregate and stable per-sample evidence.
+xceval compare Baseline.xcevalresult Candidate.xcevalresult \
+  --include-samples --sample-key /input/id --output json
 
-# Enforce only the metric direction you explicitly declare.
+# Give an external agent compact failures and regression evidence, not prose.
+xceval evidence Candidate.xcevalresult \
+  --baseline Baseline.xcevalresult \
+  --sample-key /input/id --regressions-only --output json
+
+# Enforce absolute and candidate-minus-baseline rules you explicitly declare.
 xceval gate Result.xcevalresult \
   --rule "Mean of Accuracy>=0.9" \
   --rule "Maximum of Latency<2"
+xceval gate Candidate.xcevalresult \
+  --baseline Baseline.xcevalresult \
+  --delta-rule "Mean of Accuracy>=0"
 
 # Pack or split EvaluationResult JSON Lines collections.
 xceval convert ./runs --to jsonl \
   --output-path Results.xcevalresults.jsonl
 
-# Run an app-specific executable that saves .xcevalresult files.
+# Discover and run a declared producer with durable idempotency.
+xceval targets --output json
+xceval target search-quality --output json
+xceval run search-quality \
+  --operation-id search-quality-001 \
+  --selection .xceval/selections/failures.json \
+  --output json
+xceval operation search-quality-001 --output json
+xceval plan --run-id search-quality-002 --output json
+
+# Legacy producers remain supported without a target manifest.
 xceval run --results-path ./results -- \
   swift run MyEvaluationRunner
+
+# Persist stable failures and promote reviewed regression data.
+xceval select Candidate.xcevalresult \
+  --only-failures --sample-key /input/id \
+  --output-path .xceval/selections/failures.json
+xceval datasets validate Fixtures/holdout.json --sample-key /id
+xceval datasets draft Candidate.xcevalresult \
+  --only-failures --sample-key /id \
+  --output-path .xceval/drafts/regressions.json
+xceval datasets promote .xceval/drafts/regressions.json \
+  --into Fixtures/holdout.json \
+  --sample-key /id --output-path Fixtures/holdout-next.json
 
 # Run all producer and analysis stages declared in a versioned manifest.
 xceval pipeline xceval.pipeline.json
@@ -206,13 +256,86 @@ Text is the default in an interactive terminal. JSON is the default when output
 is piped. Use `-` as an input path to read a result or collection from stdin.
 Use `--output text|json|jsonl|raw-json|apple-json` where supported.
 
+## External Agent Control Loop
+
+The agent is the caller. `xceval` is the tool surface and evidence protocol:
+
+```mermaid
+flowchart LR
+    A["Agent discovers APIs and targets"] --> B["xceval runs declared evaluation"]
+    B --> C["xceval emits artifact IDs, failures, deltas, and gates"]
+    C --> D["Agent reads source-grounded evidence"]
+    D --> E["Agent edits product, prompt, tool, or evaluation code"]
+    E --> F["Agent reruns with a new operation ID"]
+    F --> C
+    C --> G["Reviewed failures enter the regression dataset"]
+```
+
+An operation ID makes retries safe; it does not hide a second execution behind
+the same request. A selection manifest identifies the exact failing samples a
+producer should rerun. Artifact IDs are canonical across JSON formatting, while
+byte digests preserve the exact source. Dataset promotion is explicit and never
+copies a model response into an expected label.
+
+The loop is intentionally open-ended. Codex, another coding agent, CI, or a
+developer can decide what source to inspect and change. `xceval` only reports
+facts, executes declared commands, and persists reproducible evidence.
+
+### Declared targets
+
+`.xceval/targets.json` is the discovery boundary between a repository and an
+agent:
+
+```json
+{
+  "schemaVersion": "xceval.targets/v1",
+  "targets": [
+    {
+      "id": "search-quality",
+      "kind": "command",
+      "workingDirectory": "..",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swift",
+        "run",
+        "search-evaluate"
+      ],
+      "environment": {
+        "inherit": ["PATH"],
+        "set": {}
+      },
+      "outputs": [
+        {
+          "role": "evaluation-result",
+          "path": ".xceval/results",
+          "format": "xcevalresult",
+          "minimumCount": 1
+        }
+      ],
+      "requirements": [
+        {
+          "capability": "apple.evaluations",
+          "minimumVersion": "27.0"
+        }
+      ],
+      "sampleKeyPointer": "/id"
+    }
+  ]
+}
+```
+
+Each target has a content-derived revision. Environment inheritance is an
+allowlist; undeclared parent values are not passed into a declared producer.
+Output paths are safety-checked before execution.
+
 ## Framework Boundaries
 
-A universal binary cannot construct every `Evaluation` itself. Framework types
-such as the sample, subject, expected value, tools, model judge, dimensions,
-credentials, and synthetic-data validator are generic Swift code compiled into
-the owning app or package. Claiming otherwise would require `xceval` to guess
-application behavior.
+A universal binary cannot execute every generic `Evaluation` inside its own
+process. Framework types such as the sample, subject, tools, model judge,
+dimensions, credentials, and synthetic-data validator are compiled into the
+owning app or package. `xceval api` can generate and verify that Swift, while a
+declared target executes it without requiring the CLI to guess application
+behavior.
 
 `xceval` instead interoperates with framework capabilities at explicit
 boundaries. Rows marked as producer-owned still require app-specific Swift code;
@@ -220,8 +343,10 @@ the CLI only launches that code and consumes its persisted output.
 
 | Evaluations capability | `xceval` handling |
 | --- | --- |
-| Starter package with JSON data, deterministic evaluators, `.evaluates`, direct persistence, and gates | Generate with `xceval init` |
-| `Evaluation`, custom `Evaluator`, and `Metric` | Run the typed producer with `xceval run` |
+| Installed interface declarations and source evidence | Discover with `xceval api list` and `api show` |
+| Deterministic, model-judge, tool-call, synthetic, and session recipes | Generate and typecheck with `api example`, `api verify`, and `init --template` |
+| Starter package with JSON data, `.evaluates`, direct persistence, targets, and gates | Generate with `xceval init` |
+| `Evaluation`, custom `Evaluator`, and `Metric` | Run a declared typed producer with `targets`, `target`, and `run` |
 | Swift Testing `.evaluates` | Run tests and export attachments with `xceval test` |
 | `ArrayLoader`, `JSONLoader`, and `StreamLoader` | Execute in producer code; inspect every stored row |
 | Mean, median, mode, min, max, variance, standard deviation, groups, and custom aggregation | Query persisted aggregates with `metrics`, `inspect`, `compare`, and `gate` |
@@ -231,6 +356,9 @@ the CLI only launches that code and consumes its persisted output.
 | `saveJSON`, `loadJSON`, `saveJSONLines`, and `loadJSONLines` workflows | Read, validate, pack, split, and stream with `list`, `validate`, and `convert` |
 | Summary and detailed data frames | Normalize with `inspect`, `samples`, `metrics`, and `report` |
 | Xcode evaluation reports | Export with Apple’s `xcresulttool` through `export` or `test` |
+| Failure evidence and selected reruns | Persist with `select`; emit with `evidence`; pass to `run --selection` |
+| Reviewed regression datasets | Discover, validate, select, quarantine, draft, and promote with `datasets` |
+| Baseline/control iteration | Compare stable samples and apply explicit candidate-minus-baseline gates |
 | End-to-end producer, analysis, comparison, and policy workflow | Declare stages in `xceval.pipeline.json` and run `pipeline` |
 
 Run `xceval capabilities --output json` for the same matrix in a stable,
@@ -239,7 +367,13 @@ this README.
 
 ## Stable Machine-Readable Output
 
-Normalized JSON uses the envelope version `xceval/v1`. `inspect` exposes:
+Artifact analysis commands use the additive envelope `xceval/v1`. Target,
+selection, receipt, API, and dataset lifecycle documents use purpose-specific
+versioned schemas. Explicit `--output json` failures use `xceval.error/v1` with
+a stable code, retryability flag, message, and structured details. All current
+documents are publicly decodable through `XCEvalFormat`.
+
+`inspect` exposes:
 
 - Evaluation and result identifiers.
 - Start, end, and duration fields.
@@ -248,6 +382,7 @@ Normalized JSON uses the envelope version `xceval/v1`. `inspect` exposes:
 - Decoded sample inputs when the `Input` column contains nested JSON.
 - Response, expected value, evaluator kind, metric kind, value, and rationale.
 - Unknown nonmetric columns without discarding them.
+- A canonical artifact ID plus an exact-source byte digest.
 
 `report` combines those rows with:
 
@@ -260,6 +395,12 @@ Normalized JSON uses the envelope version `xceval/v1`. `inspect` exposes:
 
 This is the machine-readable substance of Xcode 27's evaluation report. The CLI
 does not attempt to reproduce Xcode's visual chart rendering.
+
+`evidence` compacts those facts into failing samples, metric rationales,
+structural differences, aggregate deltas, and per-sample classifications.
+`compare --include-samples` classifies stable keys as regressed, fixed, changed,
+added, removed, or unjoinable; duplicate or missing keys are never silently
+joined.
 
 `--output raw-json` returns Apple's document unchanged. This gives automation a
 stable default while preserving an escape hatch as Apple's beta schema evolves.
@@ -279,7 +420,8 @@ A direct `EvaluationResult.saveJSON` call creates a plain JSON document with the
 - `endTime`
 - `durationInMilliseconds`
 - `evaluationInfo`
-- `reportMetadata`
+- `reportMetadata` when `includeReportMetadata: true` is requested and metadata
+  is available
 - `results`
 - `summary`
 
@@ -311,17 +453,21 @@ copy found for macOS, iOS, watchOS, and visionOS platforms.
 
 ## Producer Boundary
 
-The application or package owns typed evaluation behavior. The standalone CLI
-owns orchestration and generic result behavior:
+The application or package owns typed feature behavior. The standalone CLI owns
+authoring assistance, orchestration, and generic evidence:
 
-1. `xceval run` launches any direct producer and discovers new or changed
-   `.xcevalresult` files.
-2. `xceval test` launches `xcodebuild`, preserves its `.xcresult`, and exports
+1. `xceval api` discovers the installed interface and compile-verifies
+   authoring recipes without choosing product semantics.
+2. `xceval run` launches a declared target, records a durable operation
+   receipt, and discovers new or changed `.xcevalresult` files.
+3. `xceval test` launches `xcodebuild`, preserves its `.xcresult`, and exports
    evaluation attachments even when tests fail.
-3. `xceval` then validates, lists, inspects, filters, profiles, extracts,
-   compares, converts, and gates those artifacts without opening Xcode.
-4. `xceval pipeline` composes those boundaries into a repeatable manifest and
-   writes logs plus every derived artifact into one directory.
+4. `xceval` validates, inspects, selects, profiles, compares, converts, and
+   gates those artifacts without opening Xcode.
+5. `xceval datasets` turns reviewed failures into reproducible regression data.
+6. `xceval pipeline` remains the compatibility macro for a fixed manifest
+   workflow, while external agents can compose the lower-level commands
+   directly.
 
 This keeps the CLI reusable across Foundation Models, server models,
 tool-calling systems, deterministic systems, and custom stochastic systems.
@@ -384,11 +530,11 @@ test:
 7. Compare a baseline and one experimental change.
 8. Gate the aggregate result and keep failures as regression samples.
 
-`xceval init` covers the compilable starting structure. `xceval pipeline`
-covers production, extraction, analysis, comparison, and gates. Human labeling,
-domain-specific synthetic-data validation, and judge calibration remain
-project-owned because a generic CLI cannot decide what "good" means for a
-feature.
+`xceval init` and `api` cover the compilable starting structure and exact
+framework surface. Declared targets, receipts, evidence, comparisons, delta
+gates, and dataset lifecycle commands cover repeatable iteration. Human labels,
+domain-specific synthetic-data validation, and judge calibration policy remain
+project-owned because they define what “good” means for the feature.
 
 ## Xcode Discovery
 
@@ -402,15 +548,62 @@ For export and schema commands, `xceval` checks:
 This supports side-by-side beta installations without changing the system-wide
 selected Xcode.
 
+## Executable Xcode 27 Lab
+
+`Tests/Fixtures/EvaluationsLab` is a throwaway Tuist project pinned to the
+release verification shape. It is source-controlled as a manifest and sources;
+the generated project and Derived Data are ignored.
+
+```bash
+EVALUATIONS_LAB_REQUIRE_TOOLCHAIN=1 \
+DEVELOPER_DIR=/Applications/Xcode-27.0.0-Beta.4.app/Contents/Developer \
+Tests/Fixtures/EvaluationsLab/Scripts/verify-harness.sh
+```
+
+The strict harness:
+
+- Generates the project with Tuist 4.202.2.
+- Compiles shared Evaluations code for macOS, iOS Simulator, visionOS
+  Simulator, and watchOS Simulator.
+- Runs deterministic evaluation, persistence, loader, aggregation, structured
+  value, typed result-column, tool-trajectory, and negative-path tests.
+- Builds and runs a non-test CLI with the framework search and run paths Apple
+  documents for synthetic generation.
+- Verifies Swift Testing attachments and Apple `xcresulttool` export.
+
+The broader exploratory suite goes beyond the WWDC walkthroughs with malformed
+loader behavior, missing/wrong/duplicate/disallowed tool calls, strict
+additional-call policies, custom sample protocols, metadata-inclusive
+round-trips, holdout agreement, Cohen’s kappa, baseline/candidate win-tie-loss
+analysis, and compile coverage for every authoring recipe. Model-judge and
+synthetic-generation runtime lanes remain explicit opt-ins:
+
+```bash
+EVALUATIONS_LAB_RUN_MODEL_TESTS=1 \
+DEVELOPER_DIR=/Applications/Xcode-27.0.0-Beta.4.app/Contents/Developer \
+xcodebuild \
+  -project Tests/Fixtures/EvaluationsLab/EvaluationsLab.xcodeproj \
+  -scheme EvaluationsLabTests \
+  -destination 'platform=macOS' \
+  CODE_SIGNING_ALLOWED=NO test
+```
+
+Compile coverage is not presented as model-runtime proof, and simulator builds
+are not presented as physical-device execution.
+
 ## Beta Compatibility
 
-The Xcode 27 beta convenience APIs are not yet a reliable automation boundary.
-During development, a valid result produced by `EvaluationResult.saveJSON` was
-rejected by `EvaluationResult.loadJSON`, and `groupedSummary` crashed on another
-valid exported result because of a TabularData column type mismatch.
+The release fixture verifies default and metadata-inclusive `saveJSON`,
+`jsonData`, and JSONL round trips against Xcode 27 Beta 4. It also captures beta
+edge behavior instead of assuming ideal failures: a malformed element can make
+`JSONLoader` drop valid siblings, a malformed top-level document can yield an
+empty loader, and public load errors do not consistently materialize as
+`EvaluationResultsError`.
 
-The underlying JSON remained valid and complete. `xceval` therefore uses a
-tolerant JSON parser and preserves unknown fields.
+`xceval` therefore keeps persisted JSON as its automation boundary, performs
+its own structural validation, and preserves unknown fields. The disposable
+Tuist lab under `Tests/Fixtures/EvaluationsLab` is the executable compatibility
+specification for the currently installed beta.
 
 ## Apple Resources
 

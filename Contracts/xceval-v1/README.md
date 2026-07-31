@@ -17,6 +17,9 @@ complete normalized result. The `samples` command supports filters, offsets,
 and limits, so consumers must not assume that a samples document or JSONL
 stream represents the complete evaluation population.
 
+`artifactID` is the canonical semantic JSON identity and remains stable across
+formatting changes. `byteDigest` identifies the exact source bytes.
+
 Stable sample identity must come from a documented value inside `sample.input`.
 The normalized `sample.index` is positional and must not be used to join model
 ratings to human labels.
