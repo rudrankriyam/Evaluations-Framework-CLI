@@ -120,7 +120,7 @@ struct RunCommand: AsyncParsableCommand {
                 arguments: invocation.command,
                 currentDirectory: invocation.workingDirectory,
                 environment: invocation.environment,
-                options: processOptions()
+                options: processOptions(for: runningReceipt)
             )
         } catch {
             try failOperation(runningReceipt, message: error.localizedDescription)
@@ -377,8 +377,10 @@ struct RunCommand: AsyncParsableCommand {
         )
     }
 
-    private func processOptions() -> ProcessExecutionOptions {
-        guard let operationID else {
+    private func processOptions(
+        for receipt: OperationReceipt?
+    ) -> ProcessExecutionOptions {
+        guard let operationID, let receipt else {
             return ProcessExecutionOptions(
                 timeout: timeout,
                 handlesInterruptSignals: true
@@ -386,16 +388,17 @@ struct RunCommand: AsyncParsableCommand {
         }
         let root = expandedURL(stateDirectory)
         let digest = ContentDigest(data: Data(operationID.utf8)).rawValue
+        let prefix = "\(digest).attempt-\(receipt.attempt)"
         return ProcessExecutionOptions(
             timeout: timeout,
             handlesInterruptSignals: true,
             logs: ProcessLogOptions(
                 standardOutputURL:
                     root
-                    .appendingPathComponent("logs/\(digest).stdout.log"),
+                    .appendingPathComponent("logs/\(prefix).stdout.log"),
                 standardErrorURL:
                     root
-                    .appendingPathComponent("logs/\(digest).stderr.log"),
+                    .appendingPathComponent("logs/\(prefix).stderr.log"),
                 maximumFileBytes: 67_108_864
             )
         )

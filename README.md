@@ -461,7 +461,9 @@ authoring assistance, orchestration, and generic evidence:
 2. `xceval run` launches a declared target, records a durable operation
    receipt, recovers an attempt abandoned by a crashed executor, and discovers
    new or changed `.xcevalresult` files. A live executor retains an exclusive
-   lease, so concurrent callers do not duplicate the producer.
+   lease, so concurrent callers do not duplicate the producer. Every recovered
+   attempt writes distinct immutable stdout and stderr logs, preserving the
+   abandoned attempt's evidence.
 3. `xceval test` launches `xcodebuild`, preserves its `.xcresult`, and exports
    evaluation attachments even when tests fail.
 4. `xceval` validates, inspects, selects, profiles, compares, converts, and

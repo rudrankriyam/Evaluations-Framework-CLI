@@ -163,7 +163,9 @@ func orphanedRunLogsFailClosed() async throws {
         withIntermediateDirectories: true
     )
     let digest = ContentDigest(data: Data(operationID.utf8)).rawValue
-    let stdout = logs.appendingPathComponent("\(digest).stdout.log")
+    let stdout = logs.appendingPathComponent(
+        "\(digest).attempt-1.stdout.log"
+    )
     let original = Data("orphaned evidence\n".utf8)
     try original.write(to: stdout)
     let marker = root.appendingPathComponent("executed")
@@ -184,6 +186,94 @@ func orphanedRunLogsFailClosed() async throws {
     #expect(failed.state == .failed)
     #expect(failed.process == nil)
     #expect(failed.errorMessage?.contains("will not be replaced") == true)
+}
+
+@Test("Recovered operations preserve prior logs and use a new attempt")
+func recoveredRunUsesAttemptSpecificLogs() async throws {
+    let root = try temporaryRunDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let operationID = "recover-with-logs"
+    let marker = root.appendingPathComponent("attempts")
+    let results = root.appendingPathComponent("results")
+    let script = """
+        if [ -f "$1" ]; then
+          attempt=$(wc -l < "$1")
+        else
+          attempt=0
+        fi
+        attempt=$((attempt + 1))
+        printf 'run\n' >> "$1"
+        mkdir -p "$2"
+        printf '{"evaluationID":"Recovery","resultID":"run-%s","results":[]}\n' \
+          "$attempt" > "$2/result.xcevalresult"
+        printf 'stdout-%s' "$attempt"
+        printf 'stderr-%s' "$attempt" >&2
+        """
+    let producer = [
+        "/bin/sh",
+        "-c",
+        script,
+        "sh",
+        marker.path,
+        results.path
+    ]
+    var first = try configuredRun(
+        root: root,
+        operationID: operationID,
+        producerCommand: producer
+    )
+    try await first.run()
+    let firstReceipt = try receipt(root: root, id: operationID)
+    let firstStdout = try #require(
+        firstReceipt.process?.standardOutputLog
+    )
+    let firstStderr = try #require(
+        firstReceipt.process?.standardErrorLog
+    )
+    #expect(firstReceipt.state == .succeeded)
+    #expect(firstReceipt.attempt == 1)
+
+    let abandoned = OperationReceipt(
+        operationID: firstReceipt.operationID,
+        idempotencyKey: firstReceipt.idempotencyKey,
+        operation: firstReceipt.operation,
+        attempt: firstReceipt.attempt,
+        startedAt: firstReceipt.startedAt,
+        inputDigest: firstReceipt.inputDigest
+    )
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .secondsSince1970
+    try encoder.encode(abandoned).write(
+        to: operationStore(root: root).receiptURL(
+            for: operationID
+        ),
+        options: .atomic
+    )
+
+    var recovered = try configuredRun(
+        root: root,
+        operationID: operationID,
+        producerCommand: producer
+    )
+    try await recovered.run()
+    let recoveredReceipt = try receipt(root: root, id: operationID)
+    let recoveredStdout = try #require(
+        recoveredReceipt.process?.standardOutputLog
+    )
+    let recoveredStderr = try #require(
+        recoveredReceipt.process?.standardErrorLog
+    )
+
+    #expect(recoveredReceipt.operationID == firstReceipt.operationID)
+    #expect(recoveredReceipt.attempt == 2)
+    #expect(recoveredReceipt.state == .succeeded)
+    #expect(firstStdout != recoveredStdout)
+    #expect(firstStderr != recoveredStderr)
+    #expect(try String(contentsOfFile: firstStdout) == "stdout-1")
+    #expect(try String(contentsOfFile: firstStderr) == "stderr-1")
+    #expect(try String(contentsOfFile: recoveredStdout) == "stdout-2")
+    #expect(try String(contentsOfFile: recoveredStderr) == "stderr-2")
+    #expect(try String(contentsOf: marker, encoding: .utf8) == "run\nrun\n")
 }
 
 @Test("Selection contents are part of the idempotent request identity")
