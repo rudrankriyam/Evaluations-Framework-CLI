@@ -546,14 +546,17 @@ struct RunCommand: AsyncParsableCommand {
     ) throws {
         switch output.format {
         case .text:
-            CLIOutput.emitRaw(payload.process.standardOutput.data(using: .utf8) ?? Data())
-            if !payload.process.standardError.isEmpty {
+            guard let process = payload.process else {
+                preconditionFailure("Fresh run payloads contain a process result.")
+            }
+            CLIOutput.emitRaw(process.standardOutput.data(using: .utf8) ?? Data())
+            if !process.standardError.isEmpty {
                 FileHandle.standardError.write(
-                    Data(payload.process.standardError.utf8)
+                    Data(process.standardError.utf8)
                 )
             }
             print(
-                "Producer exit status: \(payload.process.status). "
+                "Producer exit status: \(process.status). "
                     + "Collected \(payload.artifacts.count) artifact(s)."
             )
             for artifact in payload.artifacts {
@@ -581,12 +584,6 @@ struct RunCommand: AsyncParsableCommand {
                 FileHandle.standardError.write(Data("\(errorMessage)\n".utf8))
             }
         case .json:
-            guard let process = receipt.process else {
-                throw XCEvalCLIError.operationEvidenceUnavailable(
-                    operationID: receipt.idempotencyKey,
-                    component: "the recorded process outcome"
-                )
-            }
             let artifacts = try receipt.outputs.map {
                 guard let artifact = ArtifactListItem(replaying: $0) else {
                     throw XCEvalCLIError.operationEvidenceUnavailable(
@@ -602,7 +599,7 @@ struct RunCommand: AsyncParsableCommand {
                     producerCommand: invocation.command,
                     workingDirectory: invocation.workingDirectory?.path,
                     resultsPath: invocation.resultsURL.path,
-                    process: process,
+                    process: receipt.process,
                     artifacts: artifacts,
                     operationReceipt: receipt,
                     errorMessage: receipt.errorMessage

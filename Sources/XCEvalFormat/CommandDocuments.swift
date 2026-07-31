@@ -365,7 +365,7 @@ public struct XCEvalRunDocument: Codable, Equatable, Sendable {
     public let producerCommand: [String]
     public let workingDirectory: String?
     public let resultsPath: String
-    public let process: XCEvalProcessResult
+    public let process: XCEvalProcessResult?
     public let artifacts: [XCEvalArtifactListItem]
     public let operationReceipt: XCEvalOperationReceipt?
     public let errorMessage: String?

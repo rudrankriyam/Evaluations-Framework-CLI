@@ -283,7 +283,7 @@ func decodesExecutionDocuments() throws {
         Issue.record("Expected a run document.")
         return
     }
-    #expect(runDocument.process.status == 0)
+    #expect(runDocument.process?.status == 0)
     #expect(runDocument.artifacts.count == 1)
 
     let test = try XCEvalDocumentDecoder.decode(

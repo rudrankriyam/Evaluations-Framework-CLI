@@ -327,7 +327,7 @@ struct RunPayload: Encodable {
     let producerCommand: [String]
     let workingDirectory: String?
     let resultsPath: String
-    let process: ProcessPayload
+    let process: ProcessPayload?
     let artifacts: [ArtifactListItem]
     let operationReceipt: OperationReceipt?
     let errorMessage: String?
@@ -356,7 +356,7 @@ struct RunPayload: Encodable {
         producerCommand: [String],
         workingDirectory: String?,
         resultsPath: String,
-        process: OperationProcessOutcome,
+        process: OperationProcessOutcome?,
         artifacts: [ArtifactListItem],
         operationReceipt: OperationReceipt,
         errorMessage: String?
@@ -364,7 +364,7 @@ struct RunPayload: Encodable {
         self.producerCommand = producerCommand
         self.workingDirectory = workingDirectory
         self.resultsPath = resultsPath
-        self.process = ProcessPayload(replaying: process)
+        self.process = process.map(ProcessPayload.init(replaying:))
         self.artifacts = artifacts
         self.operationReceipt = operationReceipt
         self.errorMessage = errorMessage

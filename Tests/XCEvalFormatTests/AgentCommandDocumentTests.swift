@@ -231,11 +231,48 @@ func decodesExpandedRunDocument() throws {
         return
     }
 
-    #expect(run.process.terminationReason == .timedOut)
-    #expect(run.process.duration == 30)
-    #expect(run.process.standardOutputTruncated == false)
+    #expect(run.process?.terminationReason == .timedOut)
+    #expect(run.process?.duration == 30)
+    #expect(run.process?.standardOutputTruncated == false)
     #expect(run.operationReceipt?.state == .timedOut)
     #expect(run.errorMessage == "The producer timed out.")
+    #expect(run.replayed == true)
+}
+
+@Test("Run documents represent a live idempotent observer")
+func decodesInProgressRunDocument() throws {
+    let document = try XCEvalDocumentDecoder.decode(
+        agentJSON(
+            """
+            {
+              "schemaVersion":"xceval/v1",
+              "command":"run",
+              "producerCommand":["swift","run","Evaluate"],
+              "resultsPath":"/tmp/project/results",
+              "artifacts":[],
+              "operationReceipt":{
+                "schemaVersion":"xceval.operation-receipt/v1",
+                "operationID":"00000000-0000-0000-0000-000000000001",
+                "idempotencyKey":"candidate-1",
+                "operation":"run",
+                "attempt":1,
+                "state":"running",
+                "startedAt":0,
+                "outputs":[]
+              },
+              "replayed":true
+            }
+            """
+        )
+    )
+    guard case .run(let run) = document else {
+        Issue.record("Expected an in-progress run document.")
+        return
+    }
+
+    #expect(run.process == nil)
+    #expect(run.artifacts.isEmpty)
+    #expect(run.operationReceipt?.state == .running)
     #expect(run.replayed == true)
 }
 

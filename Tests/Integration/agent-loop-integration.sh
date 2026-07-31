@@ -578,6 +578,16 @@ test_operation_receipts_and_timeouts() {
         wait "$interrupted_pid" 2>/dev/null
         return 1
     fi
+    capture "$BIN" run \
+        --results-path "$WORK/interrupted-results" \
+        --operation-id operation-interrupted \
+        --state-directory "$STATE" \
+        --output json \
+        -- /bin/sleep 30
+    require_failure "observe live idempotent operation"
+    assert_json "$LAST_STDOUT" \
+        'd["schemaVersion"] == "xceval/v1" and d["command"] == "run" and d["replayed"] is True and d.get("process") is None and d["artifacts"] == [] and d["operationReceipt"]["state"] == "running"' \
+        "concurrent observer receives an in-progress run envelope"
     kill -INT "$interrupted_pid"
     set +e
     wait "$interrupted_pid"
