@@ -95,16 +95,36 @@ func processTimeoutTerminatesChild() throws {
 
 @Test("Cancelling an asynchronous run terminates the child")
 func processTaskCancellationTerminatesChild() async throws {
+    let directory = temporaryTestDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: true
+    )
+    let started = directory.appendingPathComponent("started")
+    var environment = ProcessInfo.processInfo.environment
+    environment["XCEVAL_PROCESS_STARTED"] = started.path
     let task = Task {
         try await ProcessRunner.runAsync(
             executable: URL(fileURLWithPath: "/bin/sh"),
-            arguments: ["-c", "printf started; sleep 30"],
+            arguments: [
+                "-c",
+                "printf started; touch \"$XCEVAL_PROCESS_STARTED\"; sleep 30"
+            ],
+            environment: environment,
             options: ProcessExecutionOptions(
                 terminationGracePeriod: 0
             )
         )
     }
-    try await Task.sleep(for: .milliseconds(100))
+    for _ in 0..<500
+    where !FileManager.default.fileExists(atPath: started.path) {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    try #require(
+        FileManager.default.fileExists(atPath: started.path),
+        "The child did not start within five seconds."
+    )
     task.cancel()
     let result = try await task.value
 
