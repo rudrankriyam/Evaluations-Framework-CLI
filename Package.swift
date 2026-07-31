@@ -8,6 +8,14 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
+        .library(
+            name: "XCEvalCore",
+            targets: ["XCEvalCore"]
+        ),
+        .library(
+            name: "XCEvalFormat",
+            targets: ["XCEvalFormat"]
+        ),
         .executable(
             name: "xceval",
             targets: ["XCEvalCLI"]
@@ -21,12 +29,17 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "XCEvalCore"
+            name: "XCEvalCore",
+            dependencies: ["XCEvalFormat"]
+        ),
+        .target(
+            name: "XCEvalFormat"
         ),
         .executableTarget(
             name: "XCEvalCLI",
             dependencies: [
                 "XCEvalCore",
+                "XCEvalFormat",
                 .product(
                     name: "ArgumentParser",
                     package: "swift-argument-parser"
@@ -36,6 +49,10 @@ let package = Package(
         .testTarget(
             name: "XCEvalCoreTests",
             dependencies: ["XCEvalCore"]
+        ),
+        .testTarget(
+            name: "XCEvalFormatTests",
+            dependencies: ["XCEvalFormat"]
         ),
         .testTarget(
             name: "XCEvalCLITests",

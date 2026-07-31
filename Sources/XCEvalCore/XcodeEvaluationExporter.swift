@@ -1,4 +1,5 @@
 import Foundation
+import XCEvalFormat
 
 public struct XcodeEvaluationExport: Sendable {
     public let outputDirectory: URL

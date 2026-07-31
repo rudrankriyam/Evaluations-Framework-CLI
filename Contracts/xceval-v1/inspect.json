@@ -1,0 +1,74 @@
+{
+  "artifact": {
+    "durationInMilliseconds": 1250,
+    "endTime": "2026-07-31T10:01:01Z",
+    "evaluationID": "BookSearch",
+    "info": {
+      "model": "judge-v1"
+    },
+    "otherFields": {
+      "futureArtifactField": true
+    },
+    "path": "BookSearch.xcevalresult",
+    "reportMetadata": {
+      "dataset": "holdout-v3"
+    },
+    "resultID": "RESULT-1",
+    "sampleCount": 1,
+    "samples": [
+      {
+        "expected": {
+          "value": 5
+        },
+        "index": 0,
+        "input": {
+          "record": {
+            "id": "book-1",
+            "prompt": "Recommend a Swift book"
+          }
+        },
+        "inputRaw": "{\"record\":{\"id\":\"book-1\",\"prompt\":\"Recommend a Swift book\"}}",
+        "metrics": [
+          {
+            "details": {
+              "evaluatorKind": "modelJudge",
+              "kind": "score",
+              "rationale": "Directly relevant",
+              "value": 5
+            },
+            "evaluatorKind": "modelJudge",
+            "kind": "score",
+            "name": "Relevance",
+            "rationale": "Directly relevant",
+            "value": 5
+          }
+        ],
+        "otherColumns": {},
+        "response": {
+          "value": "The Swift Programming Language"
+        }
+      }
+    ],
+    "startTime": "2026-07-31T10:01:00Z",
+    "summary": [
+      {
+        "details": {
+          "operation": {
+            "metric": "Relevance",
+            "type": "mean"
+          },
+          "value": 5
+        },
+        "name": "Mean of Relevance",
+        "operationType": "mean",
+        "sourceMetric": "Relevance",
+        "value": 5
+      }
+    ]
+  },
+  "command": "inspect",
+  "futureEnvelopeField": {
+    "ignoredByV1Consumers": true
+  },
+  "schemaVersion": "xceval/v1"
+}
