@@ -114,6 +114,24 @@ func processTaskCancellationTerminatesChild() async throws {
     #expect(result.standardOutputString == "started")
 }
 
+@Test("Process completion is not blocked by a detached descendant's pipe")
+func processCompletionIgnoresDetachedDescendantPipe() throws {
+    let result = try ProcessRunner.run(
+        executable: URL(fileURLWithPath: "/bin/sh"),
+        arguments: [
+            "-c",
+            "sleep 30 & printf '%s' \"$!\" >&2; printf complete"
+        ]
+    )
+    let childPID = try #require(Int32(result.standardErrorString))
+    defer { _ = Darwin.kill(childPID, SIGKILL) }
+
+    #expect(result.terminationReason == .exited)
+    #expect(result.status == 0)
+    #expect(result.duration < 5)
+    #expect(result.standardOutputString == "complete")
+}
+
 @Test("Operation receipt claims are idempotent across concurrent callers")
 func operationReceiptClaimsAreIdempotent() async throws {
     let directory = temporaryTestDirectory()

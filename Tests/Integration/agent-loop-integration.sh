@@ -519,6 +519,18 @@ test_operation_receipts_and_timeouts() {
     fi
     mark "idempotent replay does not re-execute target"
 
+    capture "$BIN" run fixture.evaluate \
+        --targets "$TARGETS" \
+        --operation-id operation-success \
+        --state-directory "$STATE" \
+        --timeout 9 \
+        --selection "$SEED_SELECTION" \
+        --output json
+    require_failure "conflicting operation request"
+    assert_json "$LAST_STDOUT" \
+        'd["schemaVersion"] == "xceval.error/v1" and d["command"] == "run" and d["error"]["code"] == "operation_conflict" and d["error"]["retryable"] is False and d["error"]["details"]["operationID"] == "operation-success"' \
+        "operation conflict emits its documented machine contract"
+
     capture "$BIN" run fixture.timeout \
         --targets "$TARGETS" \
         --operation-id operation-timeout \

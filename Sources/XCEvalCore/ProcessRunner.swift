@@ -107,8 +107,8 @@ public enum ProcessRunner {
         process.standardOutput = stdoutPipe.fileHandleForWriting
         process.standardError = stderrPipe.fileHandleForWriting
         let startedAt = DispatchTime.now().uptimeNanoseconds
-        readers.start()
         do {
+            try readers.start()
             try process.run()
         } catch {
             try? stdoutPipe.fileHandleForWriting.close()
@@ -438,10 +438,12 @@ private final class ProcessController: @unchecked Sendable {
 
 private final class ProcessPipeReaders: @unchecked Sendable {
     private let group = DispatchGroup()
+    private let lock = NSLock()
     private let standardOutput: FileHandle
     private let standardError: FileHandle
     private let standardOutputCollector: ProcessLogCollector
     private let standardErrorCollector: ProcessLogCollector
+    private var finishing = false
 
     init(
         standardOutput: FileHandle,
@@ -455,12 +457,17 @@ private final class ProcessPipeReaders: @unchecked Sendable {
         self.standardErrorCollector = standardErrorCollector
     }
 
-    func start() {
+    func start() throws {
+        try makeNonBlocking(standardOutput, name: "stdout pipe")
+        try makeNonBlocking(standardError, name: "stderr pipe")
         read(standardOutput, into: standardOutputCollector)
         read(standardError, into: standardErrorCollector)
     }
 
     func finish() {
+        lock.withLock {
+            finishing = true
+        }
         group.wait()
         try? standardOutput.close()
         try? standardError.close()
@@ -471,17 +478,84 @@ private final class ProcessPipeReaders: @unchecked Sendable {
         into collector: ProcessLogCollector
     ) {
         group.enter()
-        DispatchQueue.global().async { [group] in
+        let group = group
+        Thread.detachNewThread {
             defer { group.leave() }
             do {
-                while let data = try handle.read(upToCount: 65_536),
-                    !data.isEmpty
-                {
-                    try collector.consume(data)
+                var buffer = [UInt8](repeating: 0, count: 65_536)
+                while true {
+                    let count = buffer.withUnsafeMutableBytes {
+                        Darwin.read(
+                            handle.fileDescriptor,
+                            $0.baseAddress,
+                            $0.count
+                        )
+                    }
+                    if count > 0 {
+                        try collector.consume(Data(buffer.prefix(count)))
+                        continue
+                    }
+                    if count == 0 {
+                        return
+                    }
+                    let code = errno
+                    if code == EINTR {
+                        continue
+                    }
+                    if code == EAGAIN || code == EWOULDBLOCK {
+                        if self.lock.withLock({ self.finishing }) {
+                            return
+                        }
+                        try self.waitUntilReadable(handle)
+                        continue
+                    }
+                    throw ProcessLogError.systemCall(
+                        operation: "read",
+                        path: "process pipe",
+                        code: code
+                    )
                 }
             } catch {
                 collector.recordReadError(error)
             }
+        }
+    }
+
+    private func makeNonBlocking(
+        _ handle: FileHandle,
+        name: String
+    ) throws {
+        let descriptor = handle.fileDescriptor
+        let flags = fcntl(descriptor, F_GETFL)
+        guard flags != -1 else {
+            throw ProcessLogError.systemCall(
+                operation: "fcntl(F_GETFL)",
+                path: name,
+                code: errno
+            )
+        }
+        guard fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) != -1 else {
+            throw ProcessLogError.systemCall(
+                operation: "fcntl(F_SETFL)",
+                path: name,
+                code: errno
+            )
+        }
+    }
+
+    private func waitUntilReadable(_ handle: FileHandle) throws {
+        var descriptor = pollfd(
+            fd: handle.fileDescriptor,
+            events: Int16(POLLIN | POLLHUP | POLLERR),
+            revents: 0
+        )
+        let result = Darwin.poll(&descriptor, 1, 100)
+        guard result != -1 || errno == EINTR else {
+            throw ProcessLogError.systemCall(
+                operation: "poll",
+                path: "process pipe",
+                code: errno
+            )
         }
     }
 }

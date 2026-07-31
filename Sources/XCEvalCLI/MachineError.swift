@@ -18,11 +18,15 @@ struct XCEvalMachineErrorBody: Encodable {
 
 enum XCEvalCLIError: LocalizedError {
     case manifestNotFound(path: String)
+    case operationConflict(operationID: String)
 
     var errorDescription: String? {
         switch self {
         case .manifestNotFound(let path):
             "The target manifest does not exist: \(path)"
+        case .operationConflict(let operationID):
+            "Operation ID '\(operationID)' is already bound to a different "
+                + "run request."
         }
     }
 }
@@ -70,6 +74,12 @@ private func classifyMachineError(
                 "manifest_not_found",
                 false,
                 ["path": .string(path)]
+            )
+        case .operationConflict(let operationID):
+            return (
+                "operation_conflict",
+                false,
+                ["operationID": .string(operationID)]
             )
         }
     }

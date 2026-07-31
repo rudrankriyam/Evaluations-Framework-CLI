@@ -443,9 +443,8 @@ struct RunCommand: AsyncParsableCommand {
                 existing.operation == "run",
                 existing.inputDigest == digest.description
             else {
-                throw ValidationError(
-                    "Operation ID '\(operationID)' is already bound to a "
-                        + "different run request."
+                throw XCEvalCLIError.operationConflict(
+                    operationID: operationID
                 )
             }
             _ = output

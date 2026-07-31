@@ -528,18 +528,29 @@ private struct EvaluationStarterProject {
                         SelectionDocument.self,
                         from: Data(contentsOf: selectionURL)
                     )
-                    let requested = Set(selection.samples.map(\.key))
                     let records = try JSONDecoder().decode(
                         [StarterRecord].self,
                         from: Data(contentsOf: StarterDataset.url)
                     )
-                    let filtered = records.filter { record in
-                        requested.contains(record.input.prompt)
+                    var selectedIndices = Set<Int>()
+                    var missing: [String] = []
+                    for sample in selection.samples {
+                        let matches = records.indices.filter {
+                            sample.matches(records[$0])
+                        }
+                        if matches.isEmpty {
+                            missing.append(sample.key)
+                        } else {
+                            selectedIndices.formUnion(matches)
+                        }
                     }
-                    let found = Set(filtered.map(\.input.prompt))
-                    let missing = requested.subtracting(found).sorted()
                     guard missing.isEmpty else {
-                        throw RunnerError.selectionKeysNotFound(missing)
+                        throw RunnerError.selectionKeysNotFound(
+                            missing.sorted()
+                        )
+                    }
+                    let filtered = records.indices.compactMap {
+                        selectedIndices.contains($0) ? records[$0] : nil
                     }
                     let temporaryURL = FileManager.default.temporaryDirectory
                         .appendingPathComponent(
@@ -565,19 +576,96 @@ private struct EvaluationStarterProject {
 
             private struct SelectedSample: Decodable {
                 let key: String
+                let canonicalKey: String?
+                let input: SelectionInput?
+
+                func matches(_ record: StarterRecord) -> Bool {
+                    if let exactInput = input?.exactStarterInput {
+                        return record.input == exactInput
+                    }
+                    if let selectedPrompt = input?.prompt {
+                        return record.input.prompt == selectedPrompt
+                    }
+                    if key == record.input.prompt {
+                        return true
+                    }
+                    guard
+                        let canonicalKey,
+                        let data = canonicalKey.data(using: .utf8),
+                        let decoded = try? JSONDecoder().decode(
+                            String.self,
+                            from: data
+                        )
+                    else {
+                        return false
+                    }
+                    return decoded == record.input.prompt
+                }
             }
 
-            private struct StarterRecord: Codable {
+            private struct SelectionInput: Decodable {
+                let instructions: String?
+                let prompt: String?
+
+                var exactStarterInput: StarterInput? {
+                    guard let instructions, let prompt else { return nil }
+                    return StarterInput(
+                        instructions: instructions,
+                        prompt: prompt
+                    )
+                }
+
+                private enum CodingKeys: String, CodingKey {
+                    case input
+                    case record
+                    case instructions
+                    case prompt
+                    case promptDescription
+                }
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.container(
+                        keyedBy: CodingKeys.self
+                    )
+                    let nestedInput = try? container.decode(
+                        StarterInput.self,
+                        forKey: .input
+                    )
+                    let nestedRecord = try? container.decode(
+                        StarterInput.self,
+                        forKey: .record
+                    )
+                    let nested = nestedInput ?? nestedRecord
+                    instructions =
+                        nested?.instructions
+                        ?? (try? container.decodeIfPresent(
+                            String.self,
+                            forKey: .instructions
+                        ))
+                    prompt =
+                        nested?.prompt
+                        ?? (try? container.decodeIfPresent(
+                            String.self,
+                            forKey: .prompt
+                        ))
+                        ?? (try? container.decodeIfPresent(
+                            String.self,
+                            forKey: .promptDescription
+                        ))
+                }
+            }
+
+            private struct StarterRecord: Codable, Equatable {
                 let input: StarterInput
                 let output: StarterOutput
             }
 
-            private struct StarterInput: Codable {
+            private struct StarterInput: Codable, Equatable {
                 let instructions: String
                 let prompt: String
             }
 
-            private struct StarterOutput: Codable {
+            private struct StarterOutput: Codable, Equatable {
                 let value: String
             }
 
@@ -783,7 +871,8 @@ private struct EvaluationStarterProject {
             ```
 
             `run --selection <manifest>` sets `XCEVAL_SELECTION_PATH`; this
-            starter producer then reruns only the selected prompt keys.
+            starter producer then reruns records by the selected sample input
+            identity, with prompt-key compatibility for older manifests.
 
             ## Run the Swift Testing attachment
 
